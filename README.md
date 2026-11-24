@@ -1,3 +1,82 @@
+﻿# CoolReader — Android Compatibility Update
+
+## About this version
+
+This project is based on the original CoolReader
+by Vadim Lopatin and other contributors.
+
+This fork contains independent modifications and
+updates focused on compatibility with modern
+Android versions (Android 11–15).
+
+The original project:
+https://github.com/buggins/coolreader
+
+Original authors retain their respective copyrights.
+
+Modifications and contributions in this fork
+are distributed under the GNU GPL v2 or later.
+
+This is an unofficial community-maintained fork.
+It is not affiliated with or endorsed by the
+original CoolReader project.
+
+---
+
+## Changes in This Fork
+
+All modifications were made in November 2024 to restore full functionality on modern Android releases, specifically Android 11+ (API 30+) through Android 14/15 (API 34/35).
+
+### 1. Permissions & Scoped Storage (Android 11+)
+- **Storage Access Migration:** Replaced deprecated READ_EXTERNAL_STORAGE/WRITE_EXTERNAL_STORAGE with MANAGE_EXTERNAL_STORAGE (Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).
+- **Auto-Return from Settings:** Implemented dual-detection (AppOpsManager.startWatchingMode event listener + 300 ms polling fallback) that monitors when storage permission is toggled in Android Settings.
+- **Background Activity Launch (BAL) Bypass:** Brought CoolReader back to foreground using moveTaskToFront() and PendingIntent configured with ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED (Android 14/15 compatible).
+- **Notification Permission:** Added runtime request for ndroid.permission.POST_NOTIFICATIONS on Android 13+.
+
+### 2. Book Cover Rendering
+- **Listener Lifecycle Fix:** Fixed issue where CoverpageManager listeners unregistered in onPause() were never restored in onResume().
+- **Dynamic Database Provider:** Added fallback provider in CoverpageManager to resolve SQLite database instances dynamically when initially null during startup.
+- **Cache Persistence:** Fixed font-face setting change wiping the cached book covers.
+
+### 3. OPDS Catalogs
+- **Catalog Cleanup:** Removed non-functioning default catalogs (Internet Archive, Project Gutenberg, Gallica).
+- **Direct Endpoints:** Updated ManyBooks to direct OPDS feed (https://manybooks.net/opds).
+- **New Sources:** Added Standard Ebooks (https://standardebooks.org/feeds/opds).
+- **UI Responsiveness:** Added dismiss (✕) button to NoticeDialog to allow users to cancel slow/hanging OPDS downloads immediately.
+
+### 4. Android 14/15 Compatibility
+- **Broadcast Receivers:** Added Context.RECEIVER_NOT_EXPORTED flags for battery and time tick receivers.
+- **Edge-to-Edge Display:** Updated insets and layout handling to work correctly with Android 15 edge-to-edge enforcement.
+- **Target SDK:** Raised compileSdkVersion and 	argetSdkVersion to 35.
+
+---
+
+## Building Android APK
+
+Requires Android Studio with NDK (version 27.0.12077973) and JDK 21.
+
+### Quick Build (Windows PowerShell)
+
+`powershell
+.\build_apk.ps1 -BuildType Release
+`
+
+Output APK files:
+- ndroid\app\build\outputs\apk\release\app-arm64-v8a-release.apk (modern 64-bit devices)
+- ndroid\app\build\outputs\apk\release\app-armeabi-v7a-release.apk (32-bit devices)
+- ndroid\app\build\outputs\apk\release\app-universal-release.apk (all ABIs)
+
+### Gradle Direct Build
+
+`ash
+cd android
+./gradlew assembleRelease
+`
+
+---
+
+## Original CoolReader Documentation
+
 CoolReader 3 - cross platform open source e-book reader
 =======================================================
 
@@ -375,7 +454,7 @@ Qt Build under Mac OSX (obsolete)
 
 This project is based on the original **CoolReader** by Vadim Lopatin and other contributors.
 
-This fork contains independent modifications and updates focused on compatibility with modern Android versions (Android 11–15).
+This fork contains independent modifications and updates focused on compatibility with modern Android versions (Android 11вЂ“15).
 
 **Original project:** https://github.com/buggins/coolreader
 
@@ -393,33 +472,33 @@ Modifications and contributions in this fork are distributed under the **GNU GPL
 All modifications were made in November 2024 to restore functionality on Android 11+ (API 30+) and Android 14/15 (API 34/35).
 
 ### Permissions & Storage (Android 11+)
-- **`CoolReader.java`** — Full rewrite of storage permission flow:
+- **`CoolReader.java`** вЂ” Full rewrite of storage permission flow:
   - Replaced legacy `READ_EXTERNAL_STORAGE`/`WRITE_EXTERNAL_STORAGE` with `MANAGE_EXTERNAL_STORAGE` for Android 11+
   - Automatic return to app after user grants permission in Settings (via `AppOpsManager.startWatchingMode` + 300 ms polling fallback)
   - `bringAppToFront()` with Android 14+ Background Activity Launch (BAL) bypass via `ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED`
   - `POST_NOTIFICATIONS` permission request for Android 13+
 
 ### Cover Pages
-- **`CoverpageManager.java`** — Fixed `DBProvider` dynamic resolution for `null` DB cases; fixed `setFontFace` wiping the cover cache; improved `fileMatches` robustness
-- **`CRRootView.java`** — Added `onAttachedToWindow()` override; cover listener re-registration in `refreshRecentBooks()`; `postInvalidate()` on attach
+- **`CoverpageManager.java`** вЂ” Fixed `DBProvider` dynamic resolution for `null` DB cases; fixed `setFontFace` wiping the cover cache; improved `fileMatches` robustness
+- **`CRRootView.java`** вЂ” Added `onAttachedToWindow()` override; cover listener re-registration in `refreshRecentBooks()`; `postInvalidate()` on attach
 
 ### OPDS Catalogs
-- **`OPDSUtil.java`** — Removed broken/outdated entries (Internet Archive, Project Gutenberg, Gallica, Bokselskap); updated ManyBooks to direct OPDS URL `https://manybooks.net/opds`; added Standard Ebooks `https://standardebooks.org/feeds/opds`
+- **`OPDSUtil.java`** вЂ” Removed broken/outdated entries (Internet Archive, Project Gutenberg, Gallica, Bokselskap); updated ManyBooks to direct OPDS URL `https://manybooks.net/opds`; added Standard Ebooks `https://standardebooks.org/feeds/opds`
 
 ### UI / Android 14+ Compatibility
-- **`BaseActivity.java`** — Added `Context.RECEIVER_NOT_EXPORTED` flag for Android 14+ broadcast receivers; edge-to-edge insets handling
-- **`BaseDialog.java`** — Crash fix when dismissing dialog after activity is destroyed
-- **`NoticeDialog.java`** — Added close (✕) button so users can dismiss OPDS loading dialogs immediately
+- **`BaseActivity.java`** вЂ” Added `Context.RECEIVER_NOT_EXPORTED` flag for Android 14+ broadcast receivers; edge-to-edge insets handling
+- **`BaseDialog.java`** вЂ” Crash fix when dismissing dialog after activity is destroyed
+- **`NoticeDialog.java`** вЂ” Added close (вњ•) button so users can dismiss OPDS loading dialogs immediately
 
 ### Scanner
-- **`Scanner.java`** — Android 11+ scoped storage compatibility; crash fix for NPE on directory scan
+- **`Scanner.java`** вЂ” Android 11+ scoped storage compatibility; crash fix for NPE on directory scan
 
 ### Database
-- **`MainDB.java`**, **`BaseDB.java`**, **`CoverDB.java`** — OPDS catalog schema migrations; path correction improvements
+- **`MainDB.java`**, **`BaseDB.java`**, **`CoverDB.java`** вЂ” OPDS catalog schema migrations; path correction improvements
 
 ### Manifests & Build
-- **`AndroidManifest.xml`** — Added `MANAGE_EXTERNAL_STORAGE`, `POST_NOTIFICATIONS`, `REORDER_TASKS` permissions; `android:launchMode="singleTask"`; `android:exported` attributes on all receivers/activities (required for API 31+)
-- **`app/build.gradle`** — `targetSdkVersion 35`, `compileSdkVersion 35`
+- **`AndroidManifest.xml`** вЂ” Added `MANAGE_EXTERNAL_STORAGE`, `POST_NOTIFICATIONS`, `REORDER_TASKS` permissions; `android:launchMode="singleTask"`; `android:exported` attributes on all receivers/activities (required for API 31+)
+- **`app/build.gradle`** вЂ” `targetSdkVersion 35`, `compileSdkVersion 35`
 
 ---
 
