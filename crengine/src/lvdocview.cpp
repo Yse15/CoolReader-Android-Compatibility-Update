@@ -19,6 +19,11 @@
  *   Copyright (C) 2017-2021 poire-z <poire-z@users.noreply.github.com>    *
  *   Copyright (C) 2018-2022 Aleksey Chernov <valexlin@gmail.com>          *
  *                                                                         *
+ *   Modified 2024-11-25: Support window.cutout.* safe insets in           *
+ *   updateLayout() so page header and text avoid display cutouts while    *
+ *   keeping seamless full-bleed background.                               *
+ *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
+ *                                                                         *
  *   This program is free software; you can redistribute it and/or         *
  *   modify it under the terms of the GNU General Public License           *
  *   as published by the Free Software Foundation; either version 2        *
@@ -1408,6 +1413,18 @@ int LVDocView::getPageHeaderHeight() const {
 	return h + (navbarh + HEADER_MARGIN + 1)/2;
 }
 
+static int cornerInset(int r, int y) {
+	if (r <= 0 || y >= r)
+		return 0;
+	if (y <= 0)
+		return r;
+	double d = (double)(r - y);
+	double val = (double)r * r - d * d;
+	if (val <= 0.0)
+		return r;
+	return (int)ceil((double)r - sqrt(val));
+}
+
 /// calculate page header rectangle
 void LVDocView::getPageHeaderRectangle(int pageIndex, lvRect & headerRc) const {
 	lvRect pageRc;
@@ -1434,6 +1451,26 @@ void LVDocView::getPageHeaderRectangle(int pageIndex, lvRect & headerRc) const {
 		}
 		headerRc.left += HEADER_MARGIN + propHeaderMargin;
 		headerRc.right -= HEADER_MARGIN + propHeaderMargin;
+		if (!m_props.isNull()) {
+			int insetL = 0;
+			int insetR = 0;
+			if (m_pageHeaderPos == PAGE_HEADER_POS_TOP) {
+				int rTL = m_props->getIntDef("window.corner.tl", 0);
+				int rTR = m_props->getIntDef("window.corner.tr", 0);
+				insetL = cornerInset(rTL, headerRc.top);
+				insetR = cornerInset(rTR, headerRc.top);
+			} else if (m_pageHeaderPos == PAGE_HEADER_POS_BOTTOM) {
+				int rBL = m_props->getIntDef("window.corner.bl", 0);
+				int rBR = m_props->getIntDef("window.corner.br", 0);
+				int yFromBottom = m_dy - headerRc.bottom;
+				insetL = cornerInset(rBL, yFromBottom);
+				insetR = cornerInset(rBR, yFromBottom);
+			}
+			if (insetL > 0 && headerRc.left < insetL)
+				headerRc.left = insetL;
+			if (insetR > 0 && headerRc.right > m_dx - insetR)
+				headerRc.right = m_dx - insetR;
+		}
 	}
 }
 
@@ -2728,7 +2765,11 @@ bool LVDocView::drawImage(LVDrawBuf * buf, LVImageSourceRef img, int x, int y, i
 }
 
 void LVDocView::updateLayout() {
-	lvRect rc(0, 0, m_dx, m_dy);
+	int cutoutLeft = !m_props.isNull() ? m_props->getIntDef("window.cutout.left", 0) : 0;
+	int cutoutTop = !m_props.isNull() ? m_props->getIntDef("window.cutout.top", 0) : 0;
+	int cutoutRight = !m_props.isNull() ? m_props->getIntDef("window.cutout.right", 0) : 0;
+	int cutoutBottom = !m_props.isNull() ? m_props->getIntDef("window.cutout.bottom", 0) : 0;
+	lvRect rc(cutoutLeft, cutoutTop, m_dx - cutoutRight, m_dy - cutoutBottom);
 	m_pageRects[0] = rc;
 	m_pageRects[1] = rc;
 	if (getVisiblePageCount() == 2) {
@@ -6773,6 +6814,7 @@ CRPropRef LVDocView::propsApply(CRPropRef props) {
     CRLog::trace("LVDocView::propsApply( %d items )", props->getCount());
     CRPropRef unknown = LVCreatePropsContainer();
     bool needUpdateMargins = false;
+    bool needUpdateLayout = false;
     for (int i = 0; i < props->getCount(); i++) {
         lString8 name(props->getName(i));
         lString32 value = props->getValue(i);
@@ -6877,6 +6919,11 @@ CRPropRef LVDocView::propsApply(CRPropRef props) {
                    == PROP_PAGE_MARGIN_LEFT || name == PROP_PAGE_MARGIN_RIGHT
                    || name == PROP_PAGE_MARGIN_BOTTOM) {
             needUpdateMargins = true;
+        } else if (name == "window.cutout.left" || name == "window.cutout.top"
+                   || name == "window.cutout.right" || name == "window.cutout.bottom"
+                   || name == "window.corner.tl" || name == "window.corner.tr"
+                   || name == "window.corner.bl" || name == "window.corner.br") {
+            needUpdateLayout = true;
         } else if (name == PROP_FONT_FACE) {
             setDefaultFontFace(UnicodeToUtf8(value));
             needUpdateMargins = true;
@@ -7044,8 +7091,13 @@ CRPropRef LVDocView::propsApply(CRPropRef props) {
         // if the value is not re-set).
         m_props->setString(name.c_str(), value);
     }
-    if (needUpdateMargins)
+    if (needUpdateLayout) {
+        updateLayout();
         updatePageMargins();
+        REQUEST_RENDER("cutout")
+    } else if (needUpdateMargins) {
+        updatePageMargins();
+    }
 
     // Always set/reset the TextLangMan & HyphMan properties, as this is one
     // static instance and when using multiple document instances, the settings

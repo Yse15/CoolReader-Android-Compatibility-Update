@@ -13,6 +13,11 @@
  * Copyright (C) 2018 S-trace <S-trace@list.ru>
  * Copyright (C) 2018-2021 Aleksey Chernov <valexlin@gmail.com>
  *
+ * Modified 2024-11-25: Pass display cutout and rounded corner safe insets
+ *   to engine (window.cutout.*) so page header avoids notches/corners
+ *   without black letterboxing bars.
+ *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
+ *
  * This program is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation, either version 2
@@ -82,6 +87,14 @@ public class ReaderView implements android.view.SurfaceHolder.Callback, Settings
 
 	private final SurfaceView surface;
 	private final BookView bookView;
+	private volatile int mCutoutLeft;
+	private volatile int mCutoutTop;
+	private volatile int mCutoutRight;
+	private volatile int mCutoutBottom;
+	private volatile int mCornerTL;
+	private volatile int mCornerTR;
+	private volatile int mCornerBL;
+	private volatile int mCornerBR;
 
 	public SurfaceView getSurface() {
 		return surface;
@@ -1255,7 +1268,9 @@ public class ReaderView implements android.view.SurfaceHolder.Callback, Settings
 			int x = (int) event.getX();
 			int y = (int) event.getY();
 			if ((DeviceInfo.getSDKLevel() >= 19) && mActivity.isFullscreen() && (event.getAction() == MotionEvent.ACTION_DOWN)) {
-				if ((y < 30) || (y > (getSurface().getHeight() - 30)))
+				int topGuard = Math.max(30, mCutoutTop);
+				int bottomGuard = Math.max(30, mCutoutBottom);
+				if ((y < topGuard) || (y > (getSurface().getHeight() - bottomGuard)))
 					return unexpectedEvent();
 			}
 
@@ -2799,6 +2814,14 @@ public class ReaderView implements android.view.SurfaceHolder.Callback, Settings
 				}
 			}
 		}
+		props.setInt("window.cutout.left", mCutoutLeft);
+		props.setInt("window.cutout.top", mCutoutTop);
+		props.setInt("window.cutout.right", mCutoutRight);
+		props.setInt("window.cutout.bottom", mCutoutBottom);
+		props.setInt("window.corner.tl", mCornerTL);
+		props.setInt("window.corner.tr", mCornerTR);
+		props.setInt("window.corner.bl", mCornerBL);
+		props.setInt("window.corner.br", mCornerBR);
 		doc.applySettings(props);
 		//syncViewSettings(props, save, saveDelayed);
 		drawPage();
@@ -6673,6 +6696,65 @@ public class ReaderView implements android.view.SurfaceHolder.Callback, Settings
 		//super(activity);
 		log.i("Creating normal SurfaceView");
 		surface = new ReaderSurface(activity);
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+			surface.setOnApplyWindowInsetsListener((v, insets) -> {
+				int left = 0, top = 0, right = 0, bottom = 0;
+				int rtl = 0, rtr = 0, rbl = 0, rbr = 0;
+				if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+					int types = activity.isFullscreen()
+							? android.view.WindowInsets.Type.displayCutout()
+							: (Build.VERSION.SDK_INT >= 35
+									? (android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout())
+									: 0);
+					if (types != 0) {
+						android.graphics.Insets safe = insets.getInsets(types);
+						left = safe.left;
+						top = activity.isFullscreen() ? 0 : safe.top;
+						right = safe.right;
+						bottom = safe.bottom;
+						if (activity.isFullscreen() && safe.top > 0) {
+							rtl = safe.top;
+							rtr = safe.top;
+						}
+					}
+					if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && activity.isFullscreen()) {
+						android.view.RoundedCorner c;
+						if ((c = insets.getRoundedCorner(android.view.RoundedCorner.POSITION_TOP_LEFT)) != null && c.getRadius() > 0)
+							rtl = c.getRadius();
+						if ((c = insets.getRoundedCorner(android.view.RoundedCorner.POSITION_TOP_RIGHT)) != null && c.getRadius() > 0)
+							rtr = c.getRadius();
+						if ((c = insets.getRoundedCorner(android.view.RoundedCorner.POSITION_BOTTOM_LEFT)) != null && c.getRadius() > 0)
+							rbl = c.getRadius();
+						if ((c = insets.getRoundedCorner(android.view.RoundedCorner.POSITION_BOTTOM_RIGHT)) != null && c.getRadius() > 0)
+							rbr = c.getRadius();
+					}
+				} else if (activity.isFullscreen()) {
+					android.view.DisplayCutout cutout = insets.getDisplayCutout();
+					if (cutout != null) {
+						left = cutout.getSafeInsetLeft();
+						top = 0;
+						right = cutout.getSafeInsetRight();
+						bottom = cutout.getSafeInsetBottom();
+					}
+				}
+				if (left != mCutoutLeft || top != mCutoutTop || right != mCutoutRight || bottom != mCutoutBottom
+						|| rtl != mCornerTL || rtr != mCornerTR || rbl != mCornerBL || rbr != mCornerBR) {
+					mCutoutLeft = left;
+					mCutoutTop = top;
+					mCutoutRight = right;
+					mCutoutBottom = bottom;
+					mCornerTL = rtl;
+					mCornerTR = rtr;
+					mCornerBL = rbl;
+					mCornerBR = rbr;
+					if (mInitialized && mSettings != null) {
+						final Properties propsSnapshot = new Properties(mSettings);
+						BackgroundThread.instance().postBackground(() -> applySettings(propsSnapshot));
+					}
+				}
+				return insets;
+			});
+		}
 
 		bookView = (BookView) surface;
 		surface.setOnTouchListener(this);

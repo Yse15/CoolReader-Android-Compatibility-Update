@@ -703,7 +703,7 @@ public class BaseActivity extends Activity implements Settings {
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
 			try {
 				WindowManager.LayoutParams lp = wnd.getAttributes();
-				lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER;
+				lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
 				wnd.setAttributes(lp);
 			} catch (Exception e) {
 				log.e("Error setting cutout mode", e);
@@ -738,20 +738,6 @@ public class BaseActivity extends Activity implements Settings {
 		if (decor == null)
 			decor = wnd.getDecorView();
 		if (decor != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-			if (Build.VERSION.SDK_INT >= 35) {
-				View contentView = wnd.findViewById(android.R.id.content);
-				if (contentView != null) {
-					contentView.setOnApplyWindowInsetsListener((v, insets) -> {
-						int types = mFullscreen
-								? WindowInsets.Type.displayCutout()
-								: (WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-						android.graphics.Insets safeInsets = insets.getInsets(types);
-						v.setPadding(safeInsets.left, safeInsets.top, safeInsets.right, safeInsets.bottom);
-						return insets;
-					});
-					contentView.requestApplyInsets();
-				}
-			}
 			decor.post(() -> {
 				try {
 					WindowInsetsController controller = wnd.getInsetsController();
