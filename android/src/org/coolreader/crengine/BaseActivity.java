@@ -13,7 +13,8 @@
  * Copyright (C) 2021 ourairquality <info@ourairquality.org>
  * Copyright (C) 2018-2022 Aleksey Chernov <valexlin@gmail.com>
  *
- * Modified 2024-11-25: Android 14+ receiver export flags, edge-to-edge insets handling.
+ * Modified 2024-11-25: Android 14+ receiver export flags, edge-to-edge insets handling,
+ *   default screen orientation changed to system (SCREEN_ORIENTATION_USER) for tablet/landscape support.
  *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
  *
  * This program is free software: you can redistribute it and/or
@@ -244,7 +245,7 @@ public class BaseActivity extends Activity implements Settings {
 		setScreenBacklightDuration(props.getInt(ReaderView.PROP_APP_SCREEN_BACKLIGHT_LOCK, 3));
 
 		setFullscreen(props.getBool(ReaderView.PROP_APP_FULLSCREEN, DeviceInfo.EINK_SCREEN));
-		int orientation = props.getInt(ReaderView.PROP_APP_SCREEN_ORIENTATION, 0); //(DeviceInfo.EINK_SCREEN?0:4)
+		int orientation = props.getInt(ReaderView.PROP_APP_SCREEN_ORIENTATION, 5); // System orientation by default
 		if (orientation < 0 || orientation > 5)
 			orientation = 5;
 		setScreenOrientation(orientation);
@@ -2016,7 +2017,7 @@ public class BaseActivity extends Activity implements Settings {
 			props.applyDefault(ReaderView.PROP_APP_GESTURE_PAGE_FLIPPING, "1");
 			props.applyDefault(ReaderView.PROP_APP_SHOW_COVERPAGES, "1");
 			props.applyDefault(ReaderView.PROP_APP_COVERPAGE_SIZE, "1");
-			props.applyDefault(ReaderView.PROP_APP_SCREEN_ORIENTATION, "0"); // "0"
+			props.applyDefault(ReaderView.PROP_APP_SCREEN_ORIENTATION, "5"); // System orientation by default
 			props.applyDefault(ReaderView.PROP_CONTROLS_ENABLE_VOLUME_KEYS, "1");
 			props.applyDefault(ReaderView.PROP_APP_TAP_ZONE_HILIGHT, "0");
 			props.applyDefault(ReaderView.PROP_APP_BOOK_SORT_ORDER, FileInfo.DEF_SORT_ORDER.name());
