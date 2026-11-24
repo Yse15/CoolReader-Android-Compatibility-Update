@@ -4,6 +4,10 @@
  * Copyright (C) 2013 Alexey Kabelitskiy <akabelytskyi@hmstn.com>
  * Copyright (C) 2018-2021 Aleksey Chernov <valexlin@gmail.com>
  *
+ * Modified 2024-11-25: Added onAttachedToWindow, cover listener re-registration
+ *   in refreshRecentBooks, postInvalidate on attach.
+ *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
+ *
  * This program is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation, either version 2
@@ -63,6 +67,8 @@ public class CRRootView extends ViewGroup implements CoverpageReadyListener {
 		this.mActivity = activity;
 		this.setLayoutParams(new LayoutParams(LayoutParams.FILL_PARENT, LayoutParams.FILL_PARENT));
 		this.mCoverpageManager = Services.getCoverpageManager();
+		if (this.mCoverpageManager != null)
+			this.mCoverpageManager.addCoverpageReadyListener(this);
 
 
 		int screenHeight = mActivity.getWindowManager().getDefaultDisplay().getHeight();
@@ -137,8 +143,16 @@ public class CRRootView extends ViewGroup implements CoverpageReadyListener {
 		}
 	}
 	
+	@Override
+	protected void onAttachedToWindow() {
+		super.onAttachedToWindow();
+		if (this.mCoverpageManager != null)
+			this.mCoverpageManager.addCoverpageReadyListener(this);
+	}
+
 	public void onClose() {
-		this.mCoverpageManager.removeCoverpageReadyListener(coverpageListener);
+		if (this.mCoverpageManager != null)
+			this.mCoverpageManager.removeCoverpageReadyListener(this);
 		coverpageListener = null;
 		super.onDetachedFromWindow();
 	}
@@ -241,8 +255,10 @@ public class CRRootView extends ViewGroup implements CoverpageReadyListener {
 	}
 
 	public void refreshRecentBooks() {
+		if (this.mCoverpageManager != null)
+			this.mCoverpageManager.addCoverpageReadyListener(this);
 		BackgroundThread.instance().postGUI(() -> mActivity.waitForCRDBService(() -> {
-			if (Services.getHistory() != null && mActivity.getDB() != null)
+			if (!Services.isStopped() && Services.getHistory() != null && mActivity.getDB() != null)
 				Services.getHistory().getOrLoadRecentBooks(mActivity.getDB(), bookList -> {
 					updateCurrentBook(bookList != null && bookList.size() > 0 ? bookList.get(0) : null);
 					updateRecentBooks(bookList);
@@ -251,23 +267,28 @@ public class CRRootView extends ViewGroup implements CoverpageReadyListener {
 	}
 
 	public void refreshOnlineCatalogs() {
-		mActivity.waitForCRDBService(() -> mActivity.getDB().loadOPDSCatalogs(this::updateOnlineCatalogs));
+		mActivity.waitForCRDBService(() -> {
+			if (!Services.isStopped() && mActivity.getDB() != null)
+				mActivity.getDB().loadOPDSCatalogs(this::updateOnlineCatalogs);
+		});
 	}
 
     public void refreshFileSystemFolders() {
+        if (Services.isStopped())
+            return;
         ArrayList<FileInfo> folders = Services.getFileSystemFolders().getFileSystemFolders();
         updateFilesystems(folders);
     }
 
 	ArrayList<FileInfo> lastCatalogs = new ArrayList<>();
 	private void updateOnlineCatalogs(ArrayList<FileInfo> catalogs) {
+		if (Services.isStopped() || Services.getScanner() == null)
+			return;
 		String lang = mActivity.getCurrentLanguage();
 		boolean defEnableLitres = lang.toLowerCase().startsWith("ru") && !DeviceInfo.POCKETBOOK;
 		boolean enableLitres = mActivity.settings().getBool(Settings.PROP_APP_PLUGIN_ENABLED + "." + OnlineStorePluginManager.PLUGIN_PKG_LITRES, defEnableLitres);
 		if (enableLitres)
 			catalogs.add(0, Scanner.createOnlineLibraryPluginItem(OnlineStorePluginManager.PLUGIN_PKG_LITRES, "LitRes"));
-		if (Services.getScanner() == null)
-			return;
 		FileInfo opdsRoot = Services.getScanner().getOPDSRoot();
 		if (opdsRoot.dirCount() == 0)
 			opdsRoot.addItems(catalogs);
@@ -523,14 +544,17 @@ public class CRRootView extends ViewGroup implements CoverpageReadyListener {
 		refreshRecentBooks();
 
 		// Must be initialized FileSystemFolders.favoriteFolders firstly to exclude NullPointerException.
-		mActivity.waitForCRDBService(() -> Services.getFileSystemFolders().loadFavoriteFolders(mActivity.getDB()));
+		mActivity.waitForCRDBService(() -> {
+			if (!Services.isStopped())
+				Services.getFileSystemFolders().loadFavoriteFolders(mActivity.getDB());
+		});
 
         Services.getFileSystemFolders().addListener((object, onlyProperties) -> BackgroundThread.instance().postGUI(this::refreshFileSystemFolders));
 
 		BackgroundThread.instance().postGUI(this::refreshOnlineCatalogs);
 
 		BackgroundThread.instance().postGUI(() -> {
-			if (Services.getScanner() != null)
+			if (!Services.isStopped() && Services.getScanner() != null)
 				updateLibraryItems(Services.getScanner().getLibraryItems());
 		});
 
@@ -556,16 +580,20 @@ public class CRRootView extends ViewGroup implements CoverpageReadyListener {
 		updateDelimiterTheme(R.id.delimiter5);
 
 		// Must be initialized FileSystemFolders.favoriteFolders firstly to exclude NullPointerException.
-		mActivity.waitForCRDBService(() -> Services.getFileSystemFolders().loadFavoriteFolders(mActivity.getDB()));
+		mActivity.waitForCRDBService(() -> {
+			if (!Services.isStopped())
+				Services.getFileSystemFolders().loadFavoriteFolders(mActivity.getDB());
+		});
 
-		updateCurrentBook(Services.getHistory().getLastBook());
+		if (!Services.isStopped())
+			updateCurrentBook(Services.getHistory().getLastBook());
 		refreshRecentBooks();
 
 		BackgroundThread.instance().postGUI(this::refreshFileSystemFolders);
 
 		BackgroundThread.instance().postGUI(() -> {
 			refreshOnlineCatalogs();
-			if (Services.getScanner() != null)
+			if (!Services.isStopped() && Services.getScanner() != null)
 				updateLibraryItems(Services.getScanner().getLibraryItems());
 		});
 	}
@@ -584,17 +612,19 @@ public class CRRootView extends ViewGroup implements CoverpageReadyListener {
 		super.onWindowFocusChanged(hasWindowFocus);
 	}
 
+	@Override
 	public void onCoverpagesReady(ArrayList<CoverpageManager.ImageItem> files) {
-		//invalidate();
 		log.d("CRRootView.onCoverpagesReady(" + files + ")");
 		CoverpageManager.invalidateChildImages(mView, files);
-//		for (int i=0; i<mRecentBooksScroll.getChildCount(); i++) {
-//			mRecentBooksScroll.getChildAt(i).invalidate();
-//		}
-//		//mRecentBooksScroll.invalidate();
-		//ImageView cover = (ImageView)mView.findViewById(R.id.book_cover);
-		//cover.invalidate();
-//		//mView.invalidate();
+		if (mRecentBooksScroll != null) {
+			mRecentBooksScroll.invalidate();
+			mRecentBooksScroll.postInvalidate();
+		}
+		if (mView != null) {
+			mView.invalidate();
+			mView.postInvalidate();
+		}
+		postInvalidate();
 	}
 
 	@Override

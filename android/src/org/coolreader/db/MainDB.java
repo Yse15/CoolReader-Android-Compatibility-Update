@@ -7,6 +7,9 @@
  * Copyright (C) 2018 Yuri Plotnikov <plotnikovya@gmail.com>
  * Copyright (C) 2020,2021 Aleksey Chernov <valexlin@gmail.com>
  *
+ * Modified 2024-11-25: OPDS catalog DB initialization fixes, schema migrations.
+ *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
+ *
  * This program is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation, either version 2
@@ -57,7 +60,7 @@ public class MainDB extends BaseDB {
 	public static final Logger vlog = L.create("mdb", Log.VERBOSE);
 	
 	private boolean pathCorrectionRequired = false;
-	public final int DB_VERSION = 34;
+	public final int DB_VERSION = 35;
 	@Override
 	protected boolean upgradeSchema() {
 		// When the database is just created, its version is 0.
@@ -318,6 +321,17 @@ public class MainDB extends BaseDB {
 				if (pragma_foreign_keys != 0L)
 					execSQLIgnoreErrors("PRAGMA foreign_keys=ON");
 			}
+			if (currentVersion < 35) {
+				removeOPDSCatalogsByURLs(
+						"http://bookserver.archive.org/catalog/",
+						"http://m.gutenberg.org/ebooks.opds/",
+						"https://gallica.bnf.fr/opds",
+						"http://srv.manybooks.net/opds/index.php"
+				);
+				addOPDSCatalogs(new String[] {
+						"https://manybooks.net/opds", "ManyBooks",
+				});
+			}
 
 			//==============================================================
 			// add more updates above this line
@@ -447,13 +461,12 @@ public class MainDB extends BaseDB {
 			// feedbooks.com tested 2020.01
 			// offers preview or requires registration
 			//"http://www.feedbooks.com/catalog.atom", "Feedbooks",
-			// tested 2020.01 - error 500
-			"http://bookserver.archive.org/catalog/", "Internet Archive",
-			// obsolete link
-			//		"http://m.gutenberg.org/", "Project Gutenberg",
-			//		"http://ebooksearch.webfactional.com/catalog.atom", "eBookSearch",
-			//"http://bookserver.revues.org/", "Revues.org",
-			//"http://www.legimi.com/opds/root.atom", "Legimi",
+			// obsolete / dead links removed in DB v35:
+			// "http://bookserver.archive.org/catalog/", "Internet Archive",
+			// "http://m.gutenberg.org/", "Project Gutenberg",
+			// "http://ebooksearch.webfactional.com/catalog.atom", "eBookSearch",
+			// "http://bookserver.revues.org/", "Revues.org",
+			// "http://www.legimi.com/opds/root.atom", "Legimi",
 			//https://www.ebooksgratuits.com/opds/index.php
 			// tested 2020.01
 			"http://www.ebooksgratuits.com/opds/", "Ebooks libres et gratuits (fr)",
@@ -470,11 +483,10 @@ public class MainDB extends BaseDB {
 	private final static String[] DEF_OPDS_URLS3 = {
 			// o'reilly
 			//"http://opds.oreilly.com/opds/", "O'Reilly",
-			"http://m.gutenberg.org/ebooks.opds/", "Project Gutenberg",
+			// removed in DB v35 (503/403): Project Gutenberg, Gallica (fr)
 			//"https://api.gitbook.com/opds/catalog.atom", "GitBook",
-			"http://srv.manybooks.net/opds/index.php", "ManyBooks",
+			"https://manybooks.net/opds", "ManyBooks",
 			//"http://opds.openedition.org/", "OpenEdition (fr)",
-			"https://gallica.bnf.fr/opds", "Gallica (fr)",
 			"https://www.textos.info/catalogo.atom", "textos.info (es)",
 			"https://wolnelektury.pl/opds/", "Wolne Lektury (pl)",
 			"http://www.bokselskap.no/wp-content/themes/bokselskap/tekster/opds/root.xml", "Bokselskap (no)",

@@ -644,6 +644,11 @@ public class CRToolBar extends ViewGroup {
 		else
 			bg = Utils.solidColorDrawable(theme.getPopupToolbarBackgroundColor());
 		popup.setBackgroundDrawable(bg);
+		popup.setOnDismissListener(() -> {
+			if (context != null && context.isFullscreen()) {
+				context.applyFullscreen(context.getWindow());
+			}
+		});
 		int [] location = new int[2];
 		anchor.getLocationOnScreen(location);
 		int popupY = location[1];

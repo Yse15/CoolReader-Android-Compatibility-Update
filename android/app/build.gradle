@@ -4,9 +4,10 @@ android {
     namespace 'org.coolreader'
     compileSdkVersion 35
     buildToolsVersion "35.0.0"
+    ndkVersion "27.0.12077973"
     defaultConfig {
         applicationId "org.coolreader"
-        minSdkVersion 4
+        minSdkVersion 21
         targetSdkVersion 35
         // When new version released, version code must be incremented at least by 8
         // for compatibility with ABI versioning of split apk (see below).
@@ -34,6 +35,7 @@ android {
             minifyEnabled false
             shrinkResources false
             debuggable false
+            signingConfig signingConfigs.debug
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules-optimize.pro'
             externalNativeBuild {
                 cmake {

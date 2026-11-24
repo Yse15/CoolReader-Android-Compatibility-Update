@@ -26,6 +26,7 @@
 package org.coolreader.crengine;
 
 import android.app.AlertDialog;
+import android.content.DialogInterface;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Drawable;
 import android.os.Environment;
@@ -342,22 +343,32 @@ public class Engine {
 
 	public void showProgress(final int mainProgress, final int resourceId) {
 		showProgress(mainProgress,
-				mActivity.getResources().getString(resourceId));
+				mActivity.getResources().getString(resourceId), (Runnable) null);
 	}
 
 	public void showProgress(final int mainProgress, final int resourceId, Scanner.ScanControl scanControl) {
 		showProgress(mainProgress,
-				mActivity.getResources().getString(resourceId), scanControl);
+				mActivity.getResources().getString(resourceId), scanControl != null ? () -> {
+					log.e("scanControl.stop()");
+					scanControl.stop();
+				} : null);
+	}
+
+	public void showProgress(final int mainProgress, final int resourceId, final Runnable onCancel) {
+		showProgress(mainProgress,
+				mActivity.getResources().getString(resourceId), onCancel);
 	}
 
 	private String mProgressMessage = null;
 	private int mProgressPos = 0;
+	private Runnable mProgressOnCancel = null;
 
 	private volatile int nextProgressId = 0;
 
 	public class DelayedProgress {
 		private volatile boolean cancelled;
 		private volatile boolean shown;
+		private final Runnable onCancel;
 
 		/**
 		 * Cancel scheduled progress.
@@ -378,14 +389,19 @@ public class Engine {
 			});
 		}
 
-		DelayedProgress(final int percent, final String msg, final int delayMillis) {
+		DelayedProgress(final int percent, final String msg, final int delayMillis, final Runnable onCancel) {
 			this.cancelled = false;
+			this.onCancel = onCancel;
 			BackgroundThread.instance().postGUI(() -> {
 				if (!cancelled) {
-					showProgress(percent, msg);
+					showProgress(percent, msg, onCancel);
 					shown = true;
 				}
 			}, delayMillis);
+		}
+
+		DelayedProgress(final int percent, final String msg, final int delayMillis) {
+			this(percent, msg, delayMillis, null);
 		}
 	}
 
@@ -399,7 +415,11 @@ public class Engine {
 	 * @return DelayedProgress object which can be use to hide or cancel this schedule
 	 */
 	public DelayedProgress showProgressDelayed(final int mainProgress, final String msg, final int delayMillis) {
-		return new DelayedProgress(mainProgress, msg, delayMillis);
+		return new DelayedProgress(mainProgress, msg, delayMillis, null);
+	}
+
+	public DelayedProgress showProgressDelayed(final int mainProgress, final String msg, final int delayMillis, final Runnable onCancel) {
+		return new DelayedProgress(mainProgress, msg, delayMillis, onCancel);
 	}
 
 	/**
@@ -410,7 +430,7 @@ public class Engine {
 	 * @param msg          is progress message
 	 */
 	public void showProgress(final int mainProgress, final String msg) {
-		showProgress(mainProgress, msg, null);
+		showProgress(mainProgress, msg, (Runnable) null);
 	}
 
 	/**
@@ -422,9 +442,18 @@ public class Engine {
 	 * @param scanControl  control to interrupt process, can be null.
 	 */
 	public void showProgress(final int mainProgress, final String msg, Scanner.ScanControl scanControl) {
+		showProgress(mainProgress, msg, scanControl != null ? () -> {
+			log.e("scanControl.stop()");
+			scanControl.stop();
+		} : null);
+	}
+
+	public void showProgress(final int mainProgress, final String msg, final Runnable onCancel) {
 		final int progressId = ++nextProgressId;
 		mProgressMessage = msg;
 		mProgressPos = mainProgress;
+		if (onCancel != null)
+			mProgressOnCancel = onCancel;
 		if (mainProgress == 10000) {
 			//log.v("mainProgress==10000 : calling hideProgress");
 			hideProgress();
@@ -451,7 +480,11 @@ public class Engine {
 							else
 								mProgress.setIcon(R.mipmap.cr3_logo);
 							mProgress.setMax(10000);
-							mProgress.setCancelable(null != scanControl);
+							mProgress.setCancelable(true);
+							mProgress.setCanceledOnTouchOutside(true);
+							mProgress.setButton(DialogInterface.BUTTON_NEGATIVE,
+									mActivity.getString(R.string.dlg_button_cancel),
+									(dialog, which) -> dialog.cancel());
 							mProgress.setProgress(mainProgress);
 							mProgress.setTitle(mActivity
 											.getResources()
@@ -459,9 +492,15 @@ public class Engine {
 													R.string.progress_please_wait));
 							mProgress.setMessage(msg);
 							mProgress.setOnCancelListener(dialog -> {
-								if (null != scanControl) {
-									log.e("scanControl.stop()");
-									scanControl.stop();
+								Runnable r = mProgressOnCancel;
+								mProgressOnCancel = null;
+								hideProgress();
+								if (r != null) {
+									try {
+										r.run();
+									} catch (Exception e) {
+										log.e("Exception in progress onCancel", e);
+									}
 								}
 							});
 							mProgress.show();
@@ -477,13 +516,6 @@ public class Engine {
 				} else {
 					mProgress.setProgress(mainProgress);
 					mProgress.setMessage(msg);
-					mProgress.setCancelable(null != scanControl);
-					mProgress.setOnCancelListener(dialog -> {
-						if (null != scanControl) {
-							log.e("scanControl.stop()");
-							scanControl.stop();
-						}
-					});
 					if (!mProgress.isShowing()) {
 						mProgress.show();
 						progressShown = true;
@@ -498,6 +530,7 @@ public class Engine {
 	 * (thread-safe)
 	 */
 	public void hideProgress() {
+		mProgressOnCancel = null;
 		final int progressId = ++nextProgressId;
 		log.v("hideProgress() - is called : "
 				+ Thread.currentThread().getName());
@@ -515,8 +548,12 @@ public class Engine {
 				// mProgress.hide();
 				progressShown = false;
 				progressIcon = null;
-				if (mProgress.isShowing())
-					mProgress.dismiss();
+				try {
+					if (mProgress.isShowing())
+						mProgress.dismiss();
+				} catch (Exception e) {
+					log.w("Exception while dismissing progress dialog", e);
+				}
 				mProgress = null;
 //					log.v("hideProgress() - in GUI thread, finished");
 			}
@@ -761,6 +798,32 @@ public class Engine {
 	private static final int HYPH_BOOK = 0;
 
 	public static boolean isArchive(String arcFileName) {
+		if (arcFileName == null)
+			return false;
+		String lower = arcFileName.toLowerCase();
+		// Fast path: skip known non-archive book and media extensions without I/O
+		if (lower.endsWith(".fb2") || lower.endsWith(".txt") || lower.endsWith(".html") ||
+		    lower.endsWith(".htm") || lower.endsWith(".rtf") || lower.endsWith(".pdf") ||
+		    lower.endsWith(".djvu") || lower.endsWith(".mobi") || lower.endsWith(".prc") ||
+		    lower.endsWith(".azw") || lower.endsWith(".azw3") || lower.endsWith(".jpg") ||
+		    lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".gif") ||
+		    lower.endsWith(".mp3") || lower.endsWith(".css") || lower.endsWith(".ttf") ||
+		    lower.endsWith(".otf") || lower.endsWith(".nomedia")) {
+			return false;
+		}
+		// Fast check magic bytes before invoking JNI and native archive parser
+		try (FileInputStream fis = new FileInputStream(arcFileName)) {
+			byte[] header = new byte[4];
+			int n = fis.read(header);
+			if (n < 4)
+				return false;
+			boolean isZip = (header[0] == 0x50 && header[1] == 0x4B);
+			boolean isRar = (header[0] == 0x52 && header[1] == 0x61 && header[2] == 0x72 && header[3] == 0x21);
+			if (!isZip && !isRar)
+				return false;
+		} catch (Exception e) {
+			return false;
+		}
 		synchronized (lock) {
 			return isArchiveInternal(arcFileName);
 		}

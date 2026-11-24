@@ -1124,7 +1124,10 @@ JNIEXPORT jobjectArray JNICALL Java_org_coolreader_crengine_Engine_listFilesInte
 			for (int i = 0; i < dir->GetObjectCount(); i++) {
 				const LVContainerItemInfo *item = dir->GetObjectInfo(i);
 				if (item && item->GetName()) {
-					lString32 fileName = path + "/" + item->GetName();
+					lString32 fileName = path;
+					if (fileName.length() > 0 && fileName[fileName.length() - 1] != '/')
+						fileName << "/";
+					fileName << item->GetName();
 					jstring jfilename = env.toJavaString(fileName);
 					if (NULL != jfilename) {
 						env->ExceptionClear();

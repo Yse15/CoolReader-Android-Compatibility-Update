@@ -308,6 +308,21 @@ public class TTSControlService extends BaseService {
 		super("tts");
 	}
 
+	private Intent registerReceiverCompat(BroadcastReceiver receiver, IntentFilter filter) {
+		if (Build.VERSION.SDK_INT >= 34) {
+			return registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+		} else {
+			return registerReceiver(receiver, filter);
+		}
+	}
+
+	private static int piFlags(int flags) {
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+			return flags | PendingIntent.FLAG_IMMUTABLE;
+		}
+		return flags;
+	}
+
 	@Override
 	public void onCreate() {
 		log.d("onCreate");
@@ -379,7 +394,7 @@ public class TTSControlService extends BaseService {
 						mMediaSession.setPlaybackState(
 								mPlaybackStateBuilder.setState(PlaybackState.STATE_PLAYING,
 										PlaybackState.PLAYBACK_POSITION_UNKNOWN, mSpeechRate).build());
-						registerReceiver(mBecomingNoisyReceiver, new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
+						registerReceiverCompat(mBecomingNoisyReceiver, new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
 						synchronized (mLocker) {
 							mState = State.PLAYING;
 							if (!mState.equals(mPrevState)) {
@@ -513,7 +528,7 @@ public class TTSControlService extends BaseService {
 		filter.addAction(TTS_CONTROL_ACTION_NEXT);
 		filter.addAction(TTS_CONTROL_ACTION_PREV);
 		filter.addAction(TTS_CONTROL_ACTION_STOP);
-		registerReceiver(mTTSControlActionReceiver, filter);
+		registerReceiverCompat(mTTSControlActionReceiver, filter);
 		mVolumeSettingsContentObserver = new VolumeSettingsContentObserver(new Handler());
 		getApplicationContext().getContentResolver().registerContentObserver(android.provider.Settings.System.CONTENT_URI, true, mVolumeSettingsContentObserver);
 	}
@@ -840,14 +855,16 @@ public class TTSControlService extends BaseService {
 					// update notification
 					Notification notification = buildNotification(mCurrentUtterance);
 					if (null != notification) {
-						if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ECLAIR)
+						if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+							startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+						else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ECLAIR)
 							startForeground(NOTIFICATION_ID, notification);
 						else
 							mNotificationManager.notify(NOTIFICATION_ID, notification);
 					} else {
 						log.e("Failed to build notification!");
 					}
-					registerReceiver(mBecomingNoisyReceiver, new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
+					registerReceiverCompat(mBecomingNoisyReceiver, new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
 				}
 			} else {
 				log.e("Can't say anything, audio focus is locked by other app.");
@@ -1446,7 +1463,7 @@ public class TTSControlService extends BaseService {
 			title = "CoolReader";
 		Notification notification;
 		Intent notificationIntent = new Intent(this, CoolReader.class);
-		PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, 0);
+		PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, piFlags(PendingIntent.FLAG_UPDATE_CURRENT));
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
 			Notification.Builder builder;
 			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -1487,22 +1504,22 @@ public class TTSControlService extends BaseService {
 					builder = builder.setLocalOnly(true);
 					// add actions
 					// play/pause
-					PendingIntent playPauseIntent = PendingIntent.getBroadcast(this, 0, new Intent(TTS_CONTROL_ACTION_PLAY_PAUSE), 0);
+					PendingIntent playPauseIntent = PendingIntent.getBroadcast(this, 0, new Intent(TTS_CONTROL_ACTION_PLAY_PAUSE), piFlags(PendingIntent.FLAG_UPDATE_CURRENT));
 					Notification.Action.Builder actionBld = new Notification.Action.Builder(mState == State.PAUSED ? R.drawable.ic_media_play : R.drawable.ic_media_pause, "", playPauseIntent);
 					Notification.Action actionPlayPause = actionBld.build();
 					builder = builder.addAction(actionPlayPause);
 					// prev
-					PendingIntent prevIntent = PendingIntent.getBroadcast(this, 0, new Intent(TTS_CONTROL_ACTION_PREV), 0);
+					PendingIntent prevIntent = PendingIntent.getBroadcast(this, 0, new Intent(TTS_CONTROL_ACTION_PREV), piFlags(PendingIntent.FLAG_UPDATE_CURRENT));
 					actionBld = new Notification.Action.Builder(R.drawable.ic_media_rew, "", prevIntent);
 					Notification.Action actionPrev = actionBld.build();
 					builder = builder.addAction(actionPrev);
 					// next
-					PendingIntent nextIntent = PendingIntent.getBroadcast(this, 0, new Intent(TTS_CONTROL_ACTION_NEXT), 0);
+					PendingIntent nextIntent = PendingIntent.getBroadcast(this, 0, new Intent(TTS_CONTROL_ACTION_NEXT), piFlags(PendingIntent.FLAG_UPDATE_CURRENT));
 					actionBld = new Notification.Action.Builder(R.drawable.ic_media_ff, "", nextIntent);
 					Notification.Action actionNext = actionBld.build();
 					builder = builder.addAction(actionNext);
 					// stop
-					PendingIntent stopIntent = PendingIntent.getBroadcast(this, 0, new Intent(TTS_CONTROL_ACTION_STOP), 0);
+					PendingIntent stopIntent = PendingIntent.getBroadcast(this, 0, new Intent(TTS_CONTROL_ACTION_STOP), piFlags(PendingIntent.FLAG_UPDATE_CURRENT));
 					actionBld = new Notification.Action.Builder(R.drawable.ic_media_stop, "", stopIntent);
 					Notification.Action actionStop = actionBld.build();
 					builder = builder.addAction(actionStop);
@@ -1521,7 +1538,7 @@ public class TTSControlService extends BaseService {
 			} else
 				builder = builder.setWhen(System.currentTimeMillis());
 			// delete intent
-			PendingIntent delPendingIntent = PendingIntent.getBroadcast(this, 0, new Intent(TTS_CONTROL_ACTION_STOP), 0);
+			PendingIntent delPendingIntent = PendingIntent.getBroadcast(this, 0, new Intent(TTS_CONTROL_ACTION_STOP), piFlags(PendingIntent.FLAG_UPDATE_CURRENT));
 			builder = builder.setDeleteIntent(delPendingIntent);
 			builder = builder.setContentIntent(pendingIntent);
 			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN)

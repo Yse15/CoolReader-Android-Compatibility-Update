@@ -57,6 +57,7 @@ public class ReaderViewLayout extends ViewGroup implements Settings {
 				return;
 			this.fullscreen = fullscreen;
 			statusView.updateFullscreen(fullscreen);
+			toolbarView.setVisibility(isToolbarVisible() ? VISIBLE : GONE);
 			requestLayout();
 		}
 		

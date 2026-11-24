@@ -13,6 +13,9 @@
  * Copyright (C) 2021 ourairquality <info@ourairquality.org>
  * Copyright (C) 2018-2022 Aleksey Chernov <valexlin@gmail.com>
  *
+ * Modified 2024-11-25: Android 14+ receiver export flags, edge-to-edge insets handling.
+ *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
+ *
  * This program is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation, either version 2
@@ -56,6 +59,8 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.view.WindowManager.LayoutParams;
 import android.widget.Toast;
@@ -189,8 +194,9 @@ public class BaseActivity extends Activity implements Settings {
 	@Override
 	public void onWindowFocusChanged(boolean hasFocus) {
 		super.onWindowFocusChanged(hasFocus);
-		if (hasFocus)
-			setSystemUiVisibility();
+		if (hasFocus) {
+			applyFullscreen(getWindow());
+		}
 	}
 
 	/**
@@ -320,6 +326,7 @@ public class BaseActivity extends Activity implements Settings {
 				onScreenRotationChanged(display.getRotation());
 			}
 		}
+		applyFullscreen(getWindow());
 		super.onResume();
 	}
 
@@ -547,6 +554,13 @@ public class BaseActivity extends Activity implements Settings {
 		setTheme(theme.getThemeId());
 		updateBackground();
 		updateActionsIcons();
+		if (Build.VERSION.SDK_INT >= 29) {
+			try {
+				getWindow().getDecorView().setForceDarkAllowed(false);
+			} catch (Throwable t) {
+				// ignore
+			}
+		}
 	}
 
 	int screenOrientation = ActivityInfo.SCREEN_ORIENTATION_USER;
@@ -682,23 +696,67 @@ public class BaseActivity extends Activity implements Settings {
 	}
 
 	public void applyFullscreen(Window wnd) {
+		if (wnd == null)
+			return;
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+			try {
+				WindowManager.LayoutParams lp = wnd.getAttributes();
+				lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+				wnd.setAttributes(lp);
+			} catch (Exception e) {
+				log.e("Error setting cutout mode", e);
+			}
+		}
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+			try {
+				WindowInsetsController insetsController = wnd.getInsetsController();
+				if (insetsController != null) {
+					if (mFullscreen) {
+						insetsController.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+						insetsController.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+					} else {
+						insetsController.show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+					}
+				}
+			} catch (Exception e) {
+				log.e("Error setting WindowInsetsController", e);
+			}
+		}
 		if (mFullscreen) {
-			//mActivity.getWindow().requestFeature(Window.)
 			wnd.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
 					WindowManager.LayoutParams.FLAG_FULLSCREEN);
 		} else {
-			wnd.setFlags(0, WindowManager.LayoutParams.FLAG_FULLSCREEN);
+			wnd.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
 		}
 		// enforce new window ui visibility flags
 		lastSystemUiVisibility = -1;
 		setSystemUiVisibility();
+
+		View decor = wnd.peekDecorView();
+		if (decor == null)
+			decor = wnd.getDecorView();
+		if (decor != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+			decor.post(() -> {
+				try {
+					WindowInsetsController controller = wnd.getInsetsController();
+					if (controller != null) {
+						if (mFullscreen) {
+							controller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+							controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+						} else {
+							controller.show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+						}
+					}
+				} catch (Exception e) {
+					// ignore
+				}
+			});
+		}
 	}
 
 	public void setFullscreen(boolean fullscreen) {
-		if (mFullscreen != fullscreen) {
-			mFullscreen = fullscreen;
-			applyFullscreen(getWindow());
-		}
+		mFullscreen = fullscreen;
+		applyFullscreen(getWindow());
 	}
 
 
@@ -2021,7 +2079,7 @@ public class BaseActivity extends Activity implements Settings {
 			props.applyDefault(ReaderView.PROP_STATUS_LOCATION, !DeviceInfo.EINK_SCREEN ? Settings.VIEWER_STATUS_PAGE_HEADER : Settings.VIEWER_STATUS_PAGE_FOOTER);
 			//props.applyDefault(ReaderView.PROP_TOOLBAR_LOCATION, DeviceInfo.getSDKLevel() < DeviceInfo.HONEYCOMB ? Settings.VIEWER_TOOLBAR_NONE : Settings.VIEWER_TOOLBAR_SHORT_SIDE);
 			props.applyDefault(ReaderView.PROP_TOOLBAR_LOCATION, Settings.VIEWER_TOOLBAR_NONE);
-			props.applyDefault(ReaderView.PROP_TOOLBAR_HIDE_IN_FULLSCREEN, "0");
+			props.applyDefault(ReaderView.PROP_TOOLBAR_HIDE_IN_FULLSCREEN, "1");
 
 			/*
 			  Commented until the appearance of free implementation of the binding to the Google Drive (R)

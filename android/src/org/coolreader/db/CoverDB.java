@@ -79,7 +79,8 @@ public class CoverDB extends BaseDB {
 		coverpageCache.clear();
 	}
 	
-    private static final int COVERPAGE_CACHE_SIZE = 512 * 1024;
+    // 2 MB cache for compressed JPEG cover bytes: safe across all devices, avoids repeated SQLite reads
+    private static final int COVERPAGE_CACHE_SIZE = 2 * 1024 * 1024;
     private ByteArrayCache coverpageCache = new ByteArrayCache(COVERPAGE_CACHE_SIZE);
     
 	public void saveBookCoverpage(String bookId, byte[] data)

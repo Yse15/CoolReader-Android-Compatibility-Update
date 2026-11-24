@@ -4,6 +4,9 @@
  * Copyright (C) 2013 Alexey Kabelitskiy <akabelytskyi@hmstn.com>
  * Copyright (C) 2018-2021 Aleksey Chernov <valexlin@gmail.com>
  *
+ * Modified 2024-11-25: Android 11+ scoped storage support, MediaStore fallback.
+ *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
+ *
  * This program is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation, either version 2
@@ -165,6 +168,8 @@ public class Scanner extends FileInfoChangeSource {
 			// process normal files
 			if ( items!=null ) {
 				for ( File f : items ) {
+					if ( f == null )
+						continue;
 					// check whether file is a link
 					if (Engine.isLink(f.getAbsolutePath()) != null) {
 						log.w("skipping " + f + " because it's a link");
@@ -176,6 +181,8 @@ public class Scanner extends FileInfoChangeSource {
 							continue; // treat files beginning with '.' as hidden
 						if (f.getName().equalsIgnoreCase("LOST.DIR"))
 							continue; // system directory
+						if (f.getName().toLowerCase().endsWith(".apk"))
+							continue; // application package, not a book
 						String pathName = f.getAbsolutePath();
 						if ( knownItems!=null && knownItems.contains(pathName) )
 							continue;
@@ -219,6 +226,8 @@ public class Scanner extends FileInfoChangeSource {
 				}
 				// process directories 
 				for ( File f : items ) {
+					if ( f == null )
+						continue;
 					if ( f.isDirectory() ) {
 						if ( f.getName().startsWith(".") )
 							continue; // treat dirs beginning with '.' as hidden
@@ -285,13 +294,21 @@ public class Scanner extends FileInfoChangeSource {
 			return;
 		}
 
-		// list all subdirectories
-		for (int i=0; i < baseDir.dirCount(); i++) {
-			if (control.isStopped())
-				break;
-			FileInfo dir = baseDir.getDir(i);
-			if (!dir.isListed)
-				listDirectory(dir);
+		// list all subdirectories in background thread without blocking GUI
+		if (baseDir.dirCount() > 0) {
+			BackgroundThread.instance().postBackground(() -> {
+				for (int i=0; i < baseDir.dirCount(); i++) {
+					if (control.isStopped())
+						break;
+					FileInfo dir = baseDir.getDir(i);
+					if (!dir.isListed) {
+						listDirectory(dir);
+						BackgroundThread.instance().postGUI(() -> {
+							onDirectoryContentChanged(dir);
+						});
+					}
+				}
+			});
 		}
 
 		// load book infos for files
@@ -402,10 +419,10 @@ public class Scanner extends FileInfoChangeSource {
 
 		log.d("scanDirectory(" + baseDir.getPathName() + ") " + (recursiveScan ? "recursive" : ""));
 		
-		listDirectory(baseDir, true, false);
+		listDirectory(baseDir, true, true);
 		if (null != initialUpdateCallback)
 			initialUpdateCallback.run();
-		listSubtreeBg(baseDir, mHideEmptyDirs ? Integer.MAX_VALUE : 2, scanControl, () -> {
+		listSubtreeBg(baseDir, recursiveScan ? (mHideEmptyDirs ? Integer.MAX_VALUE : 2) : 2, scanControl, () -> {
 			if ( (!getDirScanEnabled() || baseDir.isScanned) && !recursiveScan || scanControl.isStopped() ) {
 				readyListener.onComplete(scanControl);
 				return;
@@ -719,11 +736,15 @@ public class Scanner extends FileInfoChangeSource {
 				return found;
 		}
 		for ( int i=0; i<root.fileCount(); i++ ) {
-			if ( root.getFile(i).getPathName().equals(file.getPathName()) ||
-					root.isOnSDCard() && root.getFile(i).getPathName().equalsIgnoreCase(file.getPathName()) )
-				return root;
-			if ( root.getFile(i).getPathName().startsWith(file.getPathName() + "@/") ||
-					root.isOnSDCard() && root.getFile(i).getPathName().toLowerCase().startsWith(file.getPathName().toLowerCase() + "@/") )
+			String rootFilePath = root.getFile(i).getPathName();
+			if ( rootFilePath.equals(file.getPathName()) ||
+					(file.arcname != null && rootFilePath.equals(file.arcname)) ||
+					file.getPathName().startsWith(rootFilePath + "@/") ||
+					(root.isOnSDCard() && (
+						rootFilePath.equalsIgnoreCase(file.getPathName()) ||
+						(file.arcname != null && rootFilePath.equalsIgnoreCase(file.arcname)) ||
+						file.getPathName().toLowerCase().startsWith(rootFilePath.toLowerCase() + "@/")
+					)))
 				return root;
 		}
 		return null;

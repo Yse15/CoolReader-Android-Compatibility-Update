@@ -34,6 +34,7 @@ include_directories(${CR3_ROOT}/thirdparty/${REPO_ZSTD_SRCDIR}/lib)
 include_directories(${CR3_ROOT}/thirdparty/${REPO_UTF8PROC_SRCDIR})
 
 add_definitions(-DLINUX=1 -D_LINUX=1)
+add_definitions(-D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE=1)
 add_definitions(-DFT_CONFIG_MODULES_H=<android/config/ftmodule.h> -DFT_CONFIG_OPTIONS_H=<android/config/ftoption.h>)
 add_definitions(-DDOC_DATA_COMPRESSION_LEVEL=1 -DDOC_BUFFER_SIZE=0x1000000)
 add_definitions(-DENABLE_CACHE_FILE_CONTENTS_VALIDATION=1)

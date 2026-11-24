@@ -105,7 +105,15 @@ public class BaseDialog extends Dialog {
 		}
 		Log.i("cr3", "BaseDialog.window=" + getWindow());
         setCancelable(true);
-        setOnDismissListener(dialog -> onClose());
+        if (activity != null && activity.isFullscreen()) {
+            activity.applyFullscreen(getWindow());
+        }
+        setOnDismissListener(dialog -> {
+            onClose();
+            if (activity != null && activity.isFullscreen()) {
+                activity.applyFullscreen(activity.getWindow());
+            }
+        });
         onCreate();
 	}
 
@@ -331,6 +339,14 @@ public class BaseDialog extends Dialog {
         }
         return super.onKeyDown(keyCode, event);
     }
+
+	@Override
+	public void onWindowFocusChanged(boolean hasFocus) {
+		super.onWindowFocusChanged(hasFocus);
+		if (hasFocus && activity != null && activity.isFullscreen()) {
+			activity.applyFullscreen(getWindow());
+		}
+	}
 
 	@Override
 	public boolean onKeyUp(int keyCode, KeyEvent event) {

@@ -3132,8 +3132,14 @@ public class ReaderView implements android.view.SurfaceHolder.Callback, Settings
 	}
 
 	public boolean loadDocument(final FileInfo fileInfo, final Runnable doneHandler, final Runnable errorHandler) {
+		if (fileInfo == null) {
+			if (errorHandler != null)
+				errorHandler.run();
+			return false;
+		}
 		log.v("loadDocument(" + fileInfo.getPathName() + ")");
-		if (this.mBookInfo != null && this.mBookInfo.getFileInfo().pathname.equals(fileInfo.pathname) && mOpened) {
+		if (this.mBookInfo != null && this.mBookInfo.getFileInfo() != null &&
+				this.mBookInfo.getFileInfo().getPathName().equals(fileInfo.getPathName()) && mOpened) {
 			log.d("trying to load already opened document");
 			mActivity.showReader();
 			if (null != doneHandler)
@@ -3246,10 +3252,8 @@ public class ReaderView implements android.view.SurfaceHolder.Callback, Settings
 				log.v("loadDocument() : item inside location : " + fi);
 			}
 			if (fi == null) {
-				log.v("loadDocument() : no file item " + fileName + " found inside " + dir);
-				if (errorHandler != null)
-					errorHandler.run();
-				return false;
+				log.v("loadDocument() : creating direct FileInfo for " + fileName);
+				fi = new FileInfo(fileName);
 			}
 			if (fi.isDirectory) {
 				log.v("loadDocument() : is a directory, opening browser");
@@ -6279,10 +6283,14 @@ public class ReaderView implements android.view.SurfaceHolder.Callback, Settings
 
 	public void scheduleGc() {
 		try {
-			gcTask.postDelayed(() -> {
-				log.v("Initiating garbage collection");
-				System.gc();
-			}, GC_INTERVAL);
+			// On ART (Android 5.0+, SDK >= 21), explicit System.gc() causes stop-the-world
+			// pauses instead of concurrent GC. Only invoke explicit GC on older Dalvik devices.
+			if (DeviceInfo.getSDKLevel() < 21) {
+				gcTask.postDelayed(() -> {
+					log.v("Initiating garbage collection");
+					System.gc();
+				}, GC_INTERVAL);
+			}
 		} catch (Exception e) {
 			// ignore
 		}

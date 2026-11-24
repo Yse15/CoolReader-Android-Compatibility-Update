@@ -20,20 +20,19 @@
 
 package org.coolreader.crengine;
 
-import android.app.Dialog;
+import android.app.AlertDialog;
 import android.os.Bundle;
-import android.view.View;
-import android.widget.Button;
-import android.widget.TextView;
 
 import org.coolreader.R;
 
-public class NoticeDialog extends Dialog {
+public class NoticeDialog extends AlertDialog {
 
+	private final BaseActivity mActivity;
 	private final String mButton1Text;
 	private final String mButton2Text;
 	private final Runnable mButton1Runnable;
 	private final Runnable mButton2Runnable;
+	private final Runnable mDismissRunnable;
 	private String mMessageText;
 
 	public NoticeDialog(BaseActivity activity, final Runnable onOkButton) {
@@ -45,12 +44,13 @@ public class NoticeDialog extends Dialog {
 	}
 
 	public NoticeDialog(BaseActivity activity, int button1TextRes, final Runnable button1Runnable, int button2TextRes, final Runnable button2Runnable, final Runnable dismissRunnable) {
-		super(activity, activity.getCurrentTheme().getThemeId());
-		setOwnerActivity(activity);
+		super(activity);
+		mActivity = activity;
 		mButton1Text = activity.getString(button1TextRes);
 		mButton1Runnable = button1Runnable;
-		mButton2Text = activity.getString(button2TextRes);
+		mButton2Text = button2TextRes != 0 ? activity.getString(button2TextRes) : null;
 		mButton2Runnable = button2Runnable;
+		mDismissRunnable = dismissRunnable;
 		setCancelable(false);
 		setCanceledOnTouchOutside(false);
 		if (null != dismissRunnable)
@@ -58,34 +58,30 @@ public class NoticeDialog extends Dialog {
 	}
 
 	public void setMessage(int resourceId) {
-		mMessageText = getContext().getString(resourceId);
-		TextView textView = findViewById(R.id.notice_text_view);
-		if (null != textView)
-			textView.setText(resourceId);
+		mMessageText = mActivity.getString(resourceId);
+		super.setMessage(mMessageText);
 	}
 
+	@Override
+	public void setMessage(CharSequence message) {
+		mMessageText = message != null ? message.toString() : "";
+		super.setMessage(message);
+	}
+
+	@Override
 	public void onCreate(Bundle savedInstanceState) {
-		super.onCreate(savedInstanceState);
-		setContentView(R.layout.notice_dialog);
-		Button button1 = findViewById(R.id.notice_dlg_btn_positive);
-		button1.setText(mButton1Text);
-		button1.setOnClickListener(v -> {
+		setTitle(R.string.app_name);
+		if (mMessageText != null && mMessageText.length() > 0)
+			super.setMessage(mMessageText);
+		setButton(BUTTON_POSITIVE, mButton1Text, (dialog, which) -> {
 			if (mButton1Runnable != null)
 				mButton1Runnable.run();
-			dismiss();
 		});
-		Button button2 = findViewById(R.id.notice_dlg_btn_negative);
-		button2.setText(mButton2Text);
-		if (mButton2Runnable != null)
-			button2.setOnClickListener(v -> {
+		if (mButton2Text != null && mButton2Runnable != null) {
+			setButton(BUTTON_NEGATIVE, mButton2Text, (dialog, which) -> {
 				mButton2Runnable.run();
-				dismiss();
 			});
-		else
-			button2.setVisibility(View.GONE);
-		if (mMessageText.length() > 0) {
-			TextView textView = findViewById(R.id.notice_text_view);
-			textView.setText(mMessageText);
 		}
+		super.onCreate(savedInstanceState);
 	}
 }

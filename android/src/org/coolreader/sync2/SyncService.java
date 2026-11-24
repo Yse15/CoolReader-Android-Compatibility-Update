@@ -260,7 +260,11 @@ public class SyncService extends BaseService {
 		mNotificationManager = (NotificationManager)getSystemService(NOTIFICATION_SERVICE);
 		IntentFilter filter = new IntentFilter();
 		filter.addAction(SYNC_ACTION_CANCEL);
-		registerReceiver(mSyncActionReceiver, filter);
+		if (Build.VERSION.SDK_INT >= 34) {
+			registerReceiver(mSyncActionReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+		} else {
+			registerReceiver(mSyncActionReceiver, filter);
+		}
 	}
 
 	@Override
@@ -632,7 +636,10 @@ public class SyncService extends BaseService {
 					builder = builder.setLocalOnly(true);
 					// add actions
 					// cancel
-					PendingIntent cancelIntent = PendingIntent.getBroadcast(this, 0, new Intent(SYNC_ACTION_CANCEL), 0);
+					int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+					if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+						piFlags |= PendingIntent.FLAG_IMMUTABLE;
+					PendingIntent cancelIntent = PendingIntent.getBroadcast(this, 0, new Intent(SYNC_ACTION_CANCEL), piFlags);
 					Notification.Action.Builder actionBld = new Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, getString(R.string.dlg_button_cancel), cancelIntent);
 					Notification.Action actionCancel = actionBld.build();
 					builder = builder.addAction(actionCancel);
@@ -645,7 +652,10 @@ public class SyncService extends BaseService {
 			} else
 				builder = builder.setWhen(System.currentTimeMillis());
 			// delete intent (no-op)
-			PendingIntent delPendingIntent = PendingIntent.getBroadcast(this, 0, new Intent(SYNC_ACTION_NOOP), 0);
+			int piDelFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+				piDelFlags |= PendingIntent.FLAG_IMMUTABLE;
+			PendingIntent delPendingIntent = PendingIntent.getBroadcast(this, 0, new Intent(SYNC_ACTION_NOOP), piDelFlags);
 			builder = builder.setDeleteIntent(delPendingIntent);
 			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN)
 				notification = builder.build();

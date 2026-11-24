@@ -7,6 +7,11 @@
  * Copyright (C) 2018,2020 Yuri Plotnikov <plotnikovya@gmail.com>
  * Copyright (C) 2018-2021 Aleksey Chernov <valexlin@gmail.com>
  *
+ * Modified 2024-11-25: Android 11+ storage permission handling (MANAGE_EXTERNAL_STORAGE),
+ *   auto-return from Settings on permission grant via AppOpsManager and polling,
+ *   cover page listener lifecycle fixes, OPDS catalog updates, edge-to-edge display support.
+ *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
+ *
  * This program is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation, either version 2
@@ -27,6 +32,10 @@ package org.coolreader;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.ActivityManager;
+import android.app.ActivityOptions;
+import android.app.AppOpsManager;
+import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -40,6 +49,10 @@ import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Debug;
+import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.Settings;
 import android.view.LayoutInflater;
 import android.view.Surface;
 import android.view.View;
@@ -149,6 +162,11 @@ public class CoolReader extends BaseActivity {
 	private static final int REQUEST_CODE_READ_PHONE_STATE_PERM = 2;
 	private static final int REQUEST_CODE_GOOGLE_DRIVE_SIGN_IN = 3;
 	private static final int REQUEST_CODE_OPEN_DOCUMENT_TREE = 11;
+	private static final int REQUEST_CODE_MANAGE_STORAGE_PERM = 12;
+	private static final int REQUEST_CODE_POST_NOTIFICATIONS_PERM = 13;
+	private boolean mStorageAccessInitialized = false;
+	private boolean mStoragePermissionRequested = false;
+	private boolean mNotificationPermissionRequested = false;
 
 	// open document tree activity commands
 	private static final int ODT_CMD_NO_SPEC = -1;
@@ -216,6 +234,13 @@ public class CoolReader extends BaseActivity {
 
 		log.i("CoolReader.onCreate() entered");
 		super.onCreate(savedInstanceState);
+		if (Build.VERSION.SDK_INT >= 29) {
+			try {
+				getWindow().getDecorView().setForceDarkAllowed(false);
+			} catch (Throwable t) {
+				// ignore
+			}
+		}
 
 		isFirstStart = true;
 		justCreated = true;
@@ -236,7 +261,12 @@ public class CoolReader extends BaseActivity {
 		// Get battery level
 		// ACTION_BATTERY_CHANGED is a sticky broadcast & we pass null instead of receiver, then
 		// no receiver is registered -- the function simply returns the sticky Intent that matches filter.
-		Intent intent = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+		Intent intent;
+		if (Build.VERSION.SDK_INT >= 34) {
+			intent = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED), Context.RECEIVER_NOT_EXPORTED);
+		} else {
+			intent = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+		}
 		if (null != intent) {
 			// and process this Intent: save received values
 			batteryChangeReceiver.onReceive(null, intent);
@@ -263,6 +293,10 @@ public class CoolReader extends BaseActivity {
 		}
 
 		N2EpdController.n2MainActivity = this;
+
+		if (Services.getCoverpageManager() != null) {
+			Services.getCoverpageManager().setDBProvider(() -> getDB());
+		}
 
 		showRootWindow();
 
@@ -303,6 +337,7 @@ public class CoolReader extends BaseActivity {
 		}
 		 */
 
+		stopWatchingStoragePermission();
 		if (mHomeFrame != null)
 			mHomeFrame.onClose();
 		mDestroyed = true;
@@ -951,18 +986,52 @@ public class CoolReader extends BaseActivity {
 		else
 			log.i("CoolReader.onResume(), mFileToOpenFromExt=" + mFileToOpenFromExt);
 		super.onResume();
+		if (mHomeFrame != null) {
+			Services.getCoverpageManager().addCoverpageReadyListener(mHomeFrame);
+		}
 		//Properties props = SettingsManager.instance(this).get();
+
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+			if (Environment.isExternalStorageManager()) {
+				stopWatchingStoragePermission();
+				mStoragePermissionRequested = false;
+				if (!mStorageAccessInitialized) {
+					onStorageAccessGranted();
+				}
+				if (Build.VERSION.SDK_INT >= 33 && !mNotificationPermissionRequested) {
+					if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+						mNotificationPermissionRequested = true;
+						requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_CODE_POST_NOTIFICATIONS_PERM);
+					}
+				}
+			} else {
+				if (mStorageAccessInitialized) {
+					mStorageAccessInitialized = false;
+					mStoragePermissionRequested = false;
+				}
+				startWatchingStoragePermission();
+				if (!mStoragePermissionRequested) {
+					requestStoragePermissions();
+				}
+			}
+		}
 
 		if (mReaderView != null)
 			mReaderView.onAppResume();
 		// ACTION_BATTERY_CHANGED: This is a sticky broadcast containing the charging state, level, and other information about the battery.
-		Intent intent = registerReceiver(batteryChangeReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-		if (null != intent) {
-			// process this Intent
-			batteryChangeReceiver.onReceive(null, intent);
+		if (Build.VERSION.SDK_INT >= 34) {
+			Intent intent = registerReceiver(batteryChangeReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED), Context.RECEIVER_NOT_EXPORTED);
+			if (null != intent) {
+				batteryChangeReceiver.onReceive(null, intent);
+			}
+			registerReceiver(timeTickReceiver, new IntentFilter(Intent.ACTION_TIME_TICK), Context.RECEIVER_NOT_EXPORTED);
+		} else {
+			Intent intent = registerReceiver(batteryChangeReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+			if (null != intent) {
+				batteryChangeReceiver.onReceive(null, intent);
+			}
+			registerReceiver(timeTickReceiver, new IntentFilter(Intent.ACTION_TIME_TICK));
 		}
-		// ACTION_TIME_TICK: The current time has changed. Sent every minute.
-		registerReceiver(timeTickReceiver, new IntentFilter(Intent.ACTION_TIME_TICK));
 
 		if (DeviceInfo.EINK_SCREEN) {
 			if (DeviceInfo.EINK_SONY) {
@@ -1036,6 +1105,7 @@ public class CoolReader extends BaseActivity {
 				Services.getHistory().loadFromDB(getDB(), 200);
 
 				mHomeFrame = new CRRootView(CoolReader.this);
+				Services.getCoverpageManager().setDBProvider(() -> getDB());
 				Services.getCoverpageManager().addCoverpageReadyListener(mHomeFrame);
 				mHomeFrame.requestFocus();
 
@@ -1095,9 +1165,187 @@ public class CoolReader extends BaseActivity {
 		log.i("CoolReader.onStop() exiting");
 	}
 
+	private void onStorageAccessGranted() {
+		log.i("Storage access GRANTED, refreshing services and loading database...");
+		mStorageAccessInitialized = true;
+		Services.refreshServices(this);
+		rebaseSettings();
+		if (mHomeFrame != null) {
+			Services.getCoverpageManager().addCoverpageReadyListener(mHomeFrame);
+		}
+		waitForCRDBService(() -> {
+			getDBService().setPathCorrector(Engine.getInstance(CoolReader.this).getPathCorrector());
+			getDB().reopenDatabase();
+			Services.getHistory().loadFromDB(getDB(), 200);
+			BackgroundThread.instance().postGUI(() -> {
+				if (mHomeFrame != null) {
+					mHomeFrame.refreshView();
+				}
+			});
+		});
+		if (Engine.getExternalSettingsDirName() != null) {
+			setExtDataDirCreateTime(new Date());
+		} else {
+			setExtDataDirCreateTime(null);
+		}
+	}
+
+	private Handler mStorageWatcherHandler;
+	private Runnable mStorageWatcherRunnable;
+	private AppOpsManager.OnOpChangedListener mStorageOpListener;
+
+	private void startWatchingStoragePermission() {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
+			return;
+		if (mStorageWatcherHandler != null) {
+			log.i("startWatchingStoragePermission: already running");
+			return;
+		}
+		log.i("startWatchingStoragePermission: starting AppOps listener and polling timer");
+
+		try {
+			AppOpsManager appOps = (AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+			if (appOps != null) {
+				mStorageOpListener = (op, packageName) -> {
+					log.i("mStorageOpListener.onOpChanged: op=" + op + ", package=" + packageName);
+					checkAndReturnFromStorageSettings();
+				};
+				String op = AppOpsManager.permissionToOp(Manifest.permission.MANAGE_EXTERNAL_STORAGE);
+				if (op == null)
+					op = "android:manage_external_storage";
+				appOps.startWatchingMode(op, null, mStorageOpListener);
+			}
+		} catch (Throwable t) {
+			log.w("Failed to startWatchingMode for storage: " + t);
+		}
+
+		mStorageWatcherHandler = new Handler(Looper.getMainLooper());
+		final long startTime = System.currentTimeMillis();
+		mStorageWatcherRunnable = new Runnable() {
+			private int checkCount = 0;
+			@Override
+			public void run() {
+				checkCount++;
+				if (checkCount % 10 == 0) {
+					log.i("Storage watcher check #" + checkCount + ", isExternalStorageManager=" + Environment.isExternalStorageManager());
+				}
+				if (checkAndReturnFromStorageSettings()) {
+					return;
+				}
+				if (System.currentTimeMillis() - startTime < 180000 && !isFinishing() && !mDestroyed) {
+					if (mStorageWatcherHandler != null) {
+						mStorageWatcherHandler.postDelayed(this, 300);
+					}
+				} else {
+					log.i("Stopping storage watcher (timeout or destroyed)");
+					stopWatchingStoragePermission();
+				}
+			}
+		};
+		mStorageWatcherHandler.postDelayed(mStorageWatcherRunnable, 400);
+	}
+
+	private void stopWatchingStoragePermission() {
+		if (mStorageWatcherHandler != null && mStorageWatcherRunnable != null) {
+			log.i("stopWatchingStoragePermission: stopping timer and listener");
+			mStorageWatcherHandler.removeCallbacks(mStorageWatcherRunnable);
+			mStorageWatcherHandler = null;
+			mStorageWatcherRunnable = null;
+		}
+		if (mStorageOpListener != null) {
+			try {
+				AppOpsManager appOps = (AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+				if (appOps != null) {
+					appOps.stopWatchingMode(mStorageOpListener);
+				}
+			} catch (Throwable ignored) {}
+			mStorageOpListener = null;
+		}
+	}
+
+	private boolean checkAndReturnFromStorageSettings() {
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+			if (Environment.isExternalStorageManager()) {
+				log.i("Storage permission granted while watching! Bringing CoolReader to front...");
+				stopWatchingStoragePermission();
+				mStoragePermissionRequested = false;
+				BackgroundThread.instance().postGUI(() -> {
+					bringAppToFront();
+					if (!mStorageAccessInitialized) {
+						onStorageAccessGranted();
+					}
+				}, 200);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private void bringAppToFront() {
+		log.i("bringAppToFront called");
+		try {
+			ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+			if (am != null) {
+				am.moveTaskToFront(getTaskId(), ActivityManager.MOVE_TASK_NO_USER_ACTION);
+			}
+		} catch (Throwable t) {
+			log.w("moveTaskToFront failed: " + t);
+		}
+		try {
+			Intent intent = new Intent(this, CoolReader.class);
+			intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+			if (Build.VERSION.SDK_INT >= 34) {
+				ActivityOptions options = ActivityOptions.makeBasic();
+				options.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+				PendingIntent pi = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+				pi.send(this, 0, null, null, null, null, options.toBundle());
+			} else if (Build.VERSION.SDK_INT >= 23) {
+				PendingIntent pi = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+				pi.send();
+			} else {
+				startActivity(intent);
+			}
+		} catch (Throwable t) {
+			log.w("bringAppToFront intent failed: " + t);
+			try {
+				Intent intent = new Intent(this, CoolReader.class);
+				intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
+				startActivity(intent);
+			} catch (Throwable t2) {
+				log.w("fallback startActivity failed: " + t2);
+			}
+		}
+	}
+
 	private void requestStoragePermissions() {
 		// check or request permission for storage
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+			if (!Environment.isExternalStorageManager()) {
+				log.i("MANAGE_EXTERNAL_STORAGE permission DENIED, requesting from user");
+				mStoragePermissionRequested = true;
+				try {
+					Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+					intent.setData(Uri.parse("package:" + getPackageName()));
+					startActivity(intent);
+				} catch (Exception e) {
+					Intent intent = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
+					startActivity(intent);
+				}
+				startWatchingStoragePermission();
+				return;
+			} else {
+				log.i("MANAGE_EXTERNAL_STORAGE permission already granted.");
+				if (!mStorageAccessInitialized) {
+					onStorageAccessGranted();
+				}
+			}
+			if (Build.VERSION.SDK_INT >= 33 && !mNotificationPermissionRequested) {
+				if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+					mNotificationPermissionRequested = true;
+					requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_CODE_POST_NOTIFICATIONS_PERM);
+				}
+			}
+		} else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
 			int readExtStoragePermissionCheck = checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE);
 			int writeExtStoragePermissionCheck = checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE);
 			ArrayList<String> needPerms = new ArrayList<>();
@@ -1112,15 +1360,14 @@ public class CoolReader extends BaseActivity {
 				log.i("WRITE_EXTERNAL_STORAGE permission already granted.");
 			}
 			if (!needPerms.isEmpty()) {
-				// TODO: Show an explanation to the user
-				// Show an explanation to the user *asynchronously* -- don't block
-				// this thread waiting for the user's response! After the user
-				// sees the explanation, try again to request the permission.
 				String[] templ = new String[0];
 				log.i("Some permissions DENIED, requesting from user these permissions: " + needPerms.toString());
-				// request permission from user
 				requestPermissions(needPerms.toArray(templ), REQUEST_CODE_STORAGE_PERM);
+			} else {
+				onStorageAccessGranted();
 			}
+		} else {
+			onStorageAccessGranted();
 		}
 	}
 
@@ -1145,33 +1392,17 @@ public class CoolReader extends BaseActivity {
 	public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
 		log.i("CoolReader.onRequestPermissionsResult()");
 		if (REQUEST_CODE_STORAGE_PERM == requestCode) {        // external storage read & write permissions
-			int ext_sd_perm_count = 0;
-			//boolean read_phone_state_granted = false;
+			boolean granted = false;
 			for (int i = 0; i < permissions.length; i++) {
-				if (grantResults[i] == PackageManager.PERMISSION_GRANTED)
+				if (grantResults[i] == PackageManager.PERMISSION_GRANTED) {
 					log.i("Permission " + permissions[i] + " GRANTED");
-				else
+					granted = true;
+				} else {
 					log.i("Permission " + permissions[i] + " DENIED");
-				if (permissions[i].compareTo(Manifest.permission.READ_EXTERNAL_STORAGE) == 0 && grantResults[i] == PackageManager.PERMISSION_GRANTED)
-					ext_sd_perm_count++;
-				else if (permissions[i].compareTo(Manifest.permission.WRITE_EXTERNAL_STORAGE) == 0 && grantResults[i] == PackageManager.PERMISSION_GRANTED)
-					ext_sd_perm_count++;
+				}
 			}
-			if (2 == ext_sd_perm_count) {
-				log.i("read&write to storage permissions GRANTED, adding sd card mount point...");
-				Services.refreshServices(this);
-				rebaseSettings();
-				waitForCRDBService(() -> {
-					getDBService().setPathCorrector(Engine.getInstance(CoolReader.this).getPathCorrector());
-					getDB().reopenDatabase();
-					Services.getHistory().loadFromDB(getDB(), 200);
-				});
-				mHomeFrame.refreshView();
-			}
-			if (Engine.getExternalSettingsDirName() != null) {
-				setExtDataDirCreateTime(new Date());
-			} else {
-				setExtDataDirCreateTime(null);
+			if (granted) {
+				onStorageAccessGranted();
 			}
 		} else if (REQUEST_CODE_READ_PHONE_STATE_PERM == requestCode) {
 			if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
@@ -1349,6 +1580,9 @@ public class CoolReader extends BaseActivity {
 	public void showRootWindow() {
 		if (null != mBrowser)
 			mBrowser.stopCurrentScan();
+		if (mHomeFrame != null) {
+			Services.getCoverpageManager().addCoverpageReadyListener(mHomeFrame);
+		}
 		setCurrentFrame(mHomeFrame);
 		if (isInterfaceCreated) {
 			/*
@@ -1550,9 +1784,17 @@ public class CoolReader extends BaseActivity {
 		loadDocument(item, null, null, forceSync);
 	}
 
-	public void loadDocument(FileInfo item, Runnable doneCallback, Runnable errorCallback, boolean forceSync) {
-		log.d("Activities.loadDocument(" + item.pathname + ")");
-		loadDocument(item.getPathName(), doneCallback, errorCallback, forceSync);
+	public void loadDocument(final FileInfo item, final Runnable doneCallback, final Runnable errorCallback, final boolean forceSync) {
+		if (item == null) {
+			if (errorCallback != null)
+				errorCallback.run();
+			return;
+		}
+		log.d("Activities.loadDocument(" + item.getPathName() + ")");
+		runInReader(() -> mReaderView.loadDocument(item, forceSync ? () -> {
+			if (null != doneCallback)
+				doneCallback.run();
+		} : doneCallback, errorCallback));
 	}
 
 	/**
@@ -1655,6 +1897,19 @@ public class CoolReader extends BaseActivity {
 
 	@Override
 	protected void onActivityResult(int requestCode, int resultCode, Intent intent) {
+		if (requestCode == REQUEST_CODE_MANAGE_STORAGE_PERM) {
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+				if (Environment.isExternalStorageManager()) {
+					log.i("MANAGE_EXTERNAL_STORAGE granted in Settings");
+					mStoragePermissionRequested = false;
+					if (!mStorageAccessInitialized) {
+						onStorageAccessGranted();
+					}
+				} else {
+					log.w("MANAGE_EXTERNAL_STORAGE not granted in Settings");
+				}
+			}
+		}
 		try {
 			mDictionaries.onActivityResult(requestCode, resultCode, intent);
 		} catch (DictionaryException e) {
@@ -2090,6 +2345,7 @@ public class CoolReader extends BaseActivity {
 	}
 
 	private void saveLogcat(String fileName, OutputStream ostream) {
+		L.i("CoolReader: saving logcat requested to " + fileName);
 		Date since = getLastLogcatDate();
 		Date now = new Date();
 		if (LogcatSaver.saveLogcat(since, ostream)) {

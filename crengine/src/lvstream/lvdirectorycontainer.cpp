@@ -210,8 +210,19 @@ LVDirectoryContainer *LVDirectoryContainer::OpenDirectory(const char32_t *path, 
         while ( (pde = readdir(d))!=NULL ) {
             lString8 fpath = p8 + "/" + pde->d_name;
             struct stat st;
-            stat( fpath.c_str(), &st );
-            if ( S_ISDIR(st.st_mode) ) {
+            memset(&st, 0, sizeof(st));
+            int res = stat( fpath.c_str(), &st );
+            bool is_dir = (res == 0 && S_ISDIR(st.st_mode));
+            bool is_reg = (res == 0 && S_ISREG(st.st_mode));
+#if defined(DT_DIR) && defined(DT_REG)
+            if (!is_dir && !is_reg) {
+                if (pde->d_type == DT_DIR)
+                    is_dir = true;
+                else if (pde->d_type == DT_REG)
+                    is_reg = true;
+            }
+#endif
+            if ( is_dir ) {
                 // dir
                 if ( strcmp(pde->d_name, ".") && strcmp(pde->d_name, "..") ) {
                     // normal directory
@@ -220,7 +231,7 @@ LVDirectoryContainer *LVDirectoryContainer::OpenDirectory(const char32_t *path, 
                     item->m_is_container = true;
                     dir->Add(item);
                 }
-            } else if ( S_ISREG(st.st_mode) ) {
+            } else if ( is_reg ) {
                 // file
                 LVDirectoryContainerItemInfo * item = new LVDirectoryContainerItemInfo;
                 item->m_name = LocalToUnicode(lString8(pde->d_name));

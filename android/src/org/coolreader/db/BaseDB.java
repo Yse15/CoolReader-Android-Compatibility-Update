@@ -22,6 +22,7 @@ package org.coolreader.db;
 
 import java.io.File;
 
+import org.coolreader.crengine.DeviceInfo;
 import org.coolreader.crengine.L;
 import org.coolreader.crengine.Logger;
 import org.coolreader.crengine.Utils;
@@ -110,11 +111,26 @@ public abstract class BaseDB {
 
 	protected abstract String dbFileName();
 	
+	private void initDbSettings(SQLiteDatabase db) {
+		if (db == null)
+			return;
+		try {
+			if (DeviceInfo.getSDKLevel() >= 11) {
+				db.enableWriteAheadLogging();
+			}
+			db.execSQL("PRAGMA synchronous = NORMAL;");
+			db.execSQL("PRAGMA cache_size = -2048;");
+		} catch (Exception e) {
+			log.w("Failed to configure DB pragmas: " + e.getMessage());
+		}
+	}
+
 	private SQLiteDatabase openDB(File dbFile) {
 		restoredFromBackup = false;
 		SQLiteDatabase db = null;
 		try {
 			db = SQLiteDatabase.openOrCreateDatabase(dbFile, null);
+			initDbSettings(db);
 			return db;
 		} catch (SQLiteException e) {
 			log.e("Error while opening DB " + dbFile.getAbsolutePath());
@@ -122,6 +138,7 @@ public abstract class BaseDB {
 			restoredFromBackup = Utils.restoreFromBackup(dbFile);
 			try {
 				db = SQLiteDatabase.openOrCreateDatabase(dbFile, null);
+				initDbSettings(db);
 				return db;
 			} catch (SQLiteException ee) {
 				log.e("Error while opening DB " + dbFile.getAbsolutePath());

@@ -4,6 +4,11 @@
  * Copyright (C) 2012 Daniel Savard <daniels@xsoli.com>
  * Copyright (C) 2018 Aleksey Chernov <valexlin@gmail.com>
  *
+ * Modified 2024-11-25: Removed broken/outdated OPDS catalog entries (Internet Archive,
+ *   Project Gutenberg, Gallica), updated ManyBooks to direct OPDS URL,
+ *   added Standard Ebooks catalog.
+ *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
+ *
  * This program is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation, either version 2
@@ -61,8 +66,8 @@ import javax.xml.parsers.SAXParserFactory;
 public class OPDSUtil {
 
 	public static final boolean EXTENDED_LOG = false; // set to false for production
-    public static final int CONNECT_TIMEOUT = 60000;
-    public static final int READ_TIMEOUT = 60000;
+    public static final int CONNECT_TIMEOUT = 15000;
+    public static final int READ_TIMEOUT = 15000;
 	/*
 <?xml version="1.0" encoding="utf-8"?>
 <feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:relevance="http://a9.com/-/opensearch/extensions/relevance/1.0/" 
@@ -509,9 +514,12 @@ xml:base="http://lib.ololo.cc/opds/">
 			}
 		}
 		private void onError(final String msg) {
+			if (cancelled)
+				return;
 			BackgroundThread.instance().executeGUI(() -> {
 				hideProgress();
-				callback.onError(msg);
+				if (!cancelled)
+					callback.onError(msg);
 			});
 		}
 		private void parseFeed( InputStream is ) throws Exception {
@@ -731,7 +739,7 @@ xml:base="http://lib.ololo.cc/opds/">
 					if (!partialDownloadCompleted) {
 						if (delayedProgress != null)
 							delayedProgress.cancel();
-						delayedProgress = Services.getEngine().showProgressDelayed(0, progressMessage, PROGRESS_DELAY_MILLIS);
+						delayedProgress = Services.getEngine().showProgressDelayed(0, progressMessage, PROGRESS_DELAY_MILLIS, () -> cancel());
 					}
 					URL newURL = url;
 					boolean useOrobotProxy = false;
@@ -777,9 +785,10 @@ xml:base="http://lib.ololo.cc/opds/">
 	                        }
 	                    } };
 	                    // Install the all-trusting trust manager
-	                    final SSLContext sc = SSLContext.getInstance("SSL");
+	                    final SSLContext sc = SSLContext.getInstance("TLS");
 	                    sc.init(null, trustAllCerts, new java.security.SecureRandom());
 	                    HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
+	                    https.setSSLSocketFactory(sc.getSocketFactory());
 	                    
 	                	https.setHostnameVerifier((arg0, arg1) -> true);
 					}
@@ -902,9 +911,9 @@ xml:base="http://lib.ololo.cc/opds/">
 					}
 				} catch (Exception e) {
 					L.e("Exception while trying to open URI " + url.toString(), e);
-					if ( progressShown )
-						Services.getEngine().hideProgress();
-					onError("Error occured while reading OPDS catalog");
+					hideProgress();
+					if (!cancelled)
+						onError("Error occured while reading OPDS catalog");
 					break;
 				} finally {
 					if ( connection!=null )
@@ -956,6 +965,13 @@ xml:base="http://lib.ololo.cc/opds/">
 			if (!cancelled) {
 				L.d("cancelling current download task");
 				cancelled = true;
+				hideProgress();
+				if (connection != null) {
+					try {
+						connection.disconnect();
+					} catch (Exception ignored) {
+					}
+				}
 			}
 		}
 
@@ -996,7 +1012,7 @@ xml:base="http://lib.ololo.cc/opds/">
 						percent = bytesRead * 100 / totalSize * 100;
 					}
 					if ( !partialDownloadCompleted && (!progressShown || percent!=lastPercent) && (progressShown || percent<maxPercentToStartShowingProgress || delay > TIMEOUT*2 ) ) {
-						Services.getEngine().showProgress(percent, progressMessage);
+						Services.getEngine().showProgress(percent, progressMessage, () -> cancel());
 						lastPercent = percent;
 						progressShown = true;
 					}

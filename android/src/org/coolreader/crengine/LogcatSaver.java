@@ -2,6 +2,9 @@
  * CoolReader for Android
  * Copyright (C) 2021 Aleksey Chernov <valexlin@gmail.com>
  *
+ * Modified 2024-11-25: Extended log capture, improved crash reporting.
+ *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
+ *
  * This program is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation, either version 2
@@ -19,12 +22,15 @@
 
 package org.coolreader.crengine;
 
+import android.os.Build;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 
 public class LogcatSaver {
@@ -118,9 +124,62 @@ public class LogcatSaver {
 	}
 
 	public static boolean saveLogcat(Date since, OutputStream outputStream) {
-		boolean res = saveLogcat_impl(since, "yyyy-MM-dd HH:mm:ss.SSS", outputStream);
-		if (!res)
-			res = saveLogcat_impl(since, "MM-dd HH:mm:ss.SSS", outputStream);
+		boolean res = false;
+		if (since != null && since.getTime() > 100000000000L) {
+			res = saveLogcat_impl(since, "yyyy-MM-dd HH:mm:ss.SSS", outputStream);
+			if (!res)
+				res = saveLogcat_impl(since, "MM-dd HH:mm:ss.SSS", outputStream);
+		}
+		if (!res) {
+			res = saveLogcat_recent(5000, outputStream);
+		}
+		return res;
+	}
+
+	private static boolean saveLogcat_recent(int lines, OutputStream outputStream) {
+		boolean res = false;
+		Process process = null;
+		try {
+			List<String> cmd = new ArrayList<>();
+			cmd.add("logcat");
+			if (DeviceInfo.getSDKLevel() >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
+				cmd.add("-v");
+				cmd.add("time");
+				cmd.add("-b");
+				cmd.add("main");
+				cmd.add("-b");
+				cmd.add("system");
+				cmd.add("-b");
+				cmd.add("crash");
+			}
+			cmd.add("-t");
+			cmd.add(String.valueOf(lines));
+			cmd.add("-d");
+			process = new ProcessBuilder().command(cmd)
+					.redirectErrorStream(true).start();
+			ProcessIOWithTimeout processIOWithTimeout = new ProcessIOWithTimeout(process, 1024);
+			int exitCode = processIOWithTimeout.waitForProcess(WAIT_TIMEOUT_MAIN);
+			if (ProcessIOWithTimeout.EXIT_CODE_TIMEOUT == exitCode) {
+				log.e("Timed out waiting for logcat command output!");
+			} else {
+				byte[] data = processIOWithTimeout.receivedData();
+				if (null != data && data.length > 0) {
+					ByteArrayInputStream inputStream = new ByteArrayInputStream(data);
+					byte[] buffer = new byte[1024];
+					int rb;
+					while ((rb = inputStream.read(buffer)) > 0) {
+						outputStream.write(buffer, 0, rb);
+					}
+					inputStream.close();
+					res = (0 == exitCode);
+				}
+			}
+		} catch (Exception e) {
+			log.e("Error running logcat: " + e);
+		} finally {
+			if (null != process)
+				process.destroy();
+		}
 		return res;
 	}
 
@@ -130,11 +189,22 @@ public class LogcatSaver {
 		String dateString = dateFormat.format(since);
 		Process process = null;
 		try {
-			// Do not specify the "-b" and "-v" switches, as they do not work on older versions of Android.
-			// "-v", "threadtime",
-			// "-b", "events", "-b", "system", "-b", "main", "-b", "crash",
-			process = new ProcessBuilder().command(
-					"logcat", "-t", dateString, "-d")
+			List<String> cmd = new ArrayList<>();
+			cmd.add("logcat");
+			if (DeviceInfo.getSDKLevel() >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
+				cmd.add("-v");
+				cmd.add("time");
+				cmd.add("-b");
+				cmd.add("main");
+				cmd.add("-b");
+				cmd.add("system");
+				cmd.add("-b");
+				cmd.add("crash");
+			}
+			cmd.add("-t");
+			cmd.add(dateString);
+			cmd.add("-d");
+			process = new ProcessBuilder().command(cmd)
 					.redirectErrorStream(true).start();
 			ProcessIOWithTimeout processIOWithTimeout = new ProcessIOWithTimeout(process, 1024);
 			int exitCode = processIOWithTimeout.waitForProcess(WAIT_TIMEOUT_MAIN);
@@ -145,7 +215,7 @@ public class LogcatSaver {
 				// Copy process output stream to file
 				// If exits code != 0 then in outputStream saved logcat error message
 				byte [] data = processIOWithTimeout.receivedData();
-				if (null != data) {
+				if (null != data && data.length > 0) {
 					ByteArrayInputStream inputStream = new ByteArrayInputStream(data);
 					byte[] buffer = new byte[1024];
 					int rb;

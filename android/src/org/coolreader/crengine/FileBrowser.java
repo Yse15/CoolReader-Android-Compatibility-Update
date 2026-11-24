@@ -117,7 +117,7 @@ public class FileBrowser extends LinearLayout implements FileInfoChangeListener 
 		    if ( isRecentDir() ) {
 			    inflater.inflate(R.menu.cr3_file_browser_recent_context_menu, menu);
 			    menu.setHeaderTitle(mActivity.getString(R.string.context_menu_title_recent_book));
-		    } else if (currDirectory.isOPDSRoot()) {
+		    } else if (currDirectory != null && currDirectory.isOPDSRoot()) {
 			    inflater.inflate(R.menu.cr3_file_browser_opds_context_menu, menu);
 			    menu.setHeaderTitle(mActivity.getString(R.string.menu_title_catalog));
 		    } else if (selectedItem!=null && selectedItem.isOPDSDir()) {
@@ -620,19 +620,22 @@ public class FileBrowser extends LinearLayout implements FileInfoChangeListener 
 			return;
 		}
 		
-		if (currDirectory != null && !currDirectory.isOPDSRoot() && !currDirectory.isOPDSBook() && !currDirectory.isOPDSDir()) {
+		final FileInfo prevDir = currDirectory;
+		if (currDirectory == null || (!currDirectory.isOPDSRoot() && !currDirectory.isOPDSBook() && !currDirectory.isOPDSDir())) {
 			// show empty directory before trying to download catalog
 			showDirectoryInternal(fileOrDir, itemToSelect);
 			// update last usage
-			mActivity.getDB().updateOPDSCatalogLastUsage(fileOrDir.getOPDSUrl());
+			if (fileOrDir.getOPDSUrl() != null)
+				mActivity.getDB().updateOPDSCatalogLastUsage(fileOrDir.getOPDSUrl());
 			mActivity.refreshOPDSRootDirectory(false);
 		}
 		
 		String url = fileOrDir.getOPDSUrl();
-		final FileInfo myCurrDirectory = currDirectory;
+		final FileInfo myCurrDirectory = prevDir;
 		if ( url!=null ) {
 			try {
 				final URL uri = new URL(url);
+				final OPDSUtil.DownloadTask[] downloadTaskHolder = new OPDSUtil.DownloadTask[1];
 				DownloadCallback callback = new DownloadCallback() {
 
 					private boolean processNewEntries(DocInfo doc,
@@ -751,7 +754,10 @@ public class FileBrowser extends LinearLayout implements FileInfoChangeListener 
 					@Override
 					public void onDownloadProgress(String type, String url,
 							int percent) {
-						mEngine.showProgress(percent * 100, "Downloading");
+						mEngine.showProgress(percent * 100, "Downloading", () -> {
+							if (downloadTaskHolder[0] != null)
+								downloadTaskHolder[0].cancel();
+						});
 					}
 					
 				};
@@ -759,8 +765,10 @@ public class FileBrowser extends LinearLayout implements FileInfoChangeListener 
 				String defFileName = Utils.transcribeFileName( fileOrDir.title!=null ? fileOrDir.title : fileOrDir.filename );
 				if ( fileOrDir.format!=null )
 					defFileName = defFileName + fileOrDir.format.getExtensions()[0];
+				String referer = myCurrDirectory != null ? myCurrDirectory.getOPDSUrl() : null;
 				final OPDSUtil.DownloadTask downloadTask = OPDSUtil.create(mActivity, uri, defFileName, fileOrDir.isDirectory?"application/atom+xml":fileMimeType, 
-						myCurrDirectory.getOPDSUrl(), callback, fileOrDir.username, fileOrDir.password);
+						referer, callback, fileOrDir.username, fileOrDir.password);
+				downloadTaskHolder[0] = downloadTask;
 				downloadTask.run();
 			} catch (MalformedURLException e) {
 				log.e("MalformedURLException: " + url);

@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
         xmlns:tools="http://schemas.android.com/tools"
-        package="org.coolreader"
         android:installLocation="auto">
 
     <supports-screens
@@ -16,16 +15,64 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-    <!-- uses-permission android:name="android.permission.WRITE_MEDIA_STORAGE"/-->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Stop TTS on incoming call -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
-    <!-- foreground TTS control service, for API >= 28 -->
+    <!-- foreground services, for API >= 28 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <!-- Hide Android3 soft buttons on Archos -->
-    <!--uses-permission android:name="archos.permission.FULLSCREEN.FULL"/-->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <!-- Notifications for Android 13+ -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- Required permission to use in-app billing. -->
     <uses-permission android:name="com.android.vending.BILLING" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.SEARCH" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="market" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.WEB_SEARCH" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="mailto" />
+        </intent>
+        <package android:name="com.socialnmobile.colordict" />
+        <package android:name="mobi.goldendict.android" />
+        <package android:name="itkach.aard2" />
+        <package android:name="aarddict.android" />
+        <package android:name="com.ngc.fora" />
+        <package android:name="info.softex.dictan" />
+        <package android:name="com.onyx.dict" />
+        <package android:name="com.google.android.apps.translate" />
+        <package android:name="ru.yandex.translate" />
+        <package android:name="org.wikipedia" />
+    </queries>
 
     <application
             android:allowBackup="true"
@@ -45,7 +92,7 @@
                 android:exported="true"
                 android:configChanges="orientation|keyboardHidden|locale|screenSize|screenLayout|layoutDirection"
                 android:theme="@android:style/Theme.NoTitleBar"
-                android:launchMode="singleInstance"
+                android:launchMode="singleTask"
                 android:windowSoftInputMode="stateAlwaysHidden"
                 android:screenOrientation="sensor">
 

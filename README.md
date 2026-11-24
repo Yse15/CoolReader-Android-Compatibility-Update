@@ -367,3 +367,73 @@ Qt Build under Mac OSX (obsolete)
         cmake -G "Unix Makefiles" -D GUI=QT -D CMAKE_OSX_ARCHITECTURES="i386 x86_64" -D QT_QMAKE_EXECUTABLE=/Developer/Qt/bin/qmake -D CMAKE_BUILD_TYPE=Release -D MAX_IMAGE_SCALE_MUL=2 -D DOC_DATA_COMPRESSION_LEVEL=3 -D DOC_BUFFER_SIZE=0x1400000 -D CMAKE_INSTALL_PREFIX=cr3.app ..
         make
         make install
+
+
+---
+
+## About This Fork
+
+This project is based on the original **CoolReader** by Vadim Lopatin and other contributors.
+
+This fork contains independent modifications and updates focused on compatibility with modern Android versions (Android 11–15).
+
+**Original project:** https://github.com/buggins/coolreader
+
+Original authors retain their respective copyrights. All existing license headers in source files are preserved unchanged.
+
+Modifications and contributions in this fork are distributed under the **GNU GPL v2 or later**, in accordance with the original project license.
+
+> This is an unofficial, community-maintained fork.  
+> It is **not** affiliated with or endorsed by the original CoolReader project.
+
+---
+
+## Changes in This Fork
+
+All modifications were made in November 2024 to restore functionality on Android 11+ (API 30+) and Android 14/15 (API 34/35).
+
+### Permissions & Storage (Android 11+)
+- **`CoolReader.java`** — Full rewrite of storage permission flow:
+  - Replaced legacy `READ_EXTERNAL_STORAGE`/`WRITE_EXTERNAL_STORAGE` with `MANAGE_EXTERNAL_STORAGE` for Android 11+
+  - Automatic return to app after user grants permission in Settings (via `AppOpsManager.startWatchingMode` + 300 ms polling fallback)
+  - `bringAppToFront()` with Android 14+ Background Activity Launch (BAL) bypass via `ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED`
+  - `POST_NOTIFICATIONS` permission request for Android 13+
+
+### Cover Pages
+- **`CoverpageManager.java`** — Fixed `DBProvider` dynamic resolution for `null` DB cases; fixed `setFontFace` wiping the cover cache; improved `fileMatches` robustness
+- **`CRRootView.java`** — Added `onAttachedToWindow()` override; cover listener re-registration in `refreshRecentBooks()`; `postInvalidate()` on attach
+
+### OPDS Catalogs
+- **`OPDSUtil.java`** — Removed broken/outdated entries (Internet Archive, Project Gutenberg, Gallica, Bokselskap); updated ManyBooks to direct OPDS URL `https://manybooks.net/opds`; added Standard Ebooks `https://standardebooks.org/feeds/opds`
+
+### UI / Android 14+ Compatibility
+- **`BaseActivity.java`** — Added `Context.RECEIVER_NOT_EXPORTED` flag for Android 14+ broadcast receivers; edge-to-edge insets handling
+- **`BaseDialog.java`** — Crash fix when dismissing dialog after activity is destroyed
+- **`NoticeDialog.java`** — Added close (✕) button so users can dismiss OPDS loading dialogs immediately
+
+### Scanner
+- **`Scanner.java`** — Android 11+ scoped storage compatibility; crash fix for NPE on directory scan
+
+### Database
+- **`MainDB.java`**, **`BaseDB.java`**, **`CoverDB.java`** — OPDS catalog schema migrations; path correction improvements
+
+### Manifests & Build
+- **`AndroidManifest.xml`** — Added `MANAGE_EXTERNAL_STORAGE`, `POST_NOTIFICATIONS`, `REORDER_TASKS` permissions; `android:launchMode="singleTask"`; `android:exported` attributes on all receivers/activities (required for API 31+)
+- **`app/build.gradle`** — `targetSdkVersion 35`, `compileSdkVersion 35`
+
+---
+
+## Building
+
+Requires Android Studio with NDK. Use the provided `build_apk.ps1` script on Windows:
+
+```powershell
+.\build_apk.ps1 -BuildType Release
+```
+
+Or via Gradle directly:
+
+```bash
+cd android
+./gradlew assembleRelease
+```

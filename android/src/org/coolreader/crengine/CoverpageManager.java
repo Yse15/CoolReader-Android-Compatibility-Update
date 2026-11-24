@@ -3,6 +3,11 @@
  * Copyright (C) 2012 Vadim Lopatin <coolreader.org@gmail.com>
  * Copyright (C) 2019-2022 Aleksey Chernov <valexlin@gmail.com>
  *
+ * Modified 2024-11-25: Fixed DBProvider dynamic resolution for null DB,
+ *   fixed font face cache wipe bug, improved fileMatches robustness,
+ *   cover listener lifecycle corrections.
+ *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
+ *
  * This program is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation, either version 2
@@ -52,7 +57,15 @@ public class CoverpageManager {
 			this.maxHeight = maxHeight;
 		}
 		public boolean fileMatches(ImageItem item) {
-			return file.pathNameEquals(item.file);
+			if (item == null || item.file == null || file == null)
+				return false;
+			if (file.pathNameEquals(item.file))
+				return true;
+			if (file.id != null && item.file.id != null && file.id.equals(item.file.id) && file.id != 0)
+				return true;
+			String p1 = file.getPathName();
+			String p2 = item.file.getPathName();
+			return p1 != null && p1.equals(p2);
 		}
 		public boolean sizeMatches(ImageItem item) {
 			return (maxWidth == item.maxWidth && maxHeight == item.maxHeight)
@@ -99,14 +112,20 @@ public class CoverpageManager {
 	 * Set listener for cover page load completion.
 	 */
 	public void addCoverpageReadyListener(CoverpageReadyListener listener) {
-		this.listeners.add(listener);
+		synchronized(listeners) {
+			if (listener != null && !this.listeners.contains(listener))
+				this.listeners.add(listener);
+		}
 	}
 	
 	/**
 	 * Set listener for cover page load completion.
 	 */
 	public void removeCoverpageReadyListener(CoverpageReadyListener listener) {
-		this.listeners.remove(listener);
+		synchronized(listeners) {
+			if (listener != null)
+				this.listeners.remove(listener);
+		}
 	}
 	
 	public boolean setCoverpageSize(int width, int height) {
@@ -120,11 +139,19 @@ public class CoverpageManager {
 		}
 	}
 	
+	public interface DBProvider {
+		CRDBService.LocalBinder getDB();
+	}
+	private DBProvider dbProvider;
+	public void setDBProvider(DBProvider provider) {
+		this.dbProvider = provider;
+	}
+
 	public boolean setFontFace(String face) {
 		synchronized(LOCK) {
-			clear();
-			if (fontFace.equals(face))
+			if (fontFace != null && fontFace.equals(face))
 				return false;
+			clear();
 			fontFace = face;
 			return true;
 		}
@@ -314,7 +341,17 @@ public class CoverpageManager {
 			}
 		}
 	}
-	private final BitmapCache mCache = new BitmapCache(32);
+	private static int calculateCacheCapacity() {
+		long maxMemory = Runtime.getRuntime().maxMemory();
+		if (DeviceInfo.EINK_SCREEN || maxMemory <= 48L * 1024 * 1024) {
+			return 32; // ~2-4 MB on low-RAM / EINK devices
+		}
+		int count = (int) (maxMemory / (1024 * 1024 * 4)); // ~1 cover per 4MB of heap
+		if (count < 32) count = 32;
+		if (count > 96) count = 96;
+		return count;
+	}
+	private final BitmapCache mCache = new BitmapCache(calculateCacheCapacity());
 	
 	private FileInfoQueue mCheckFileCacheQueue = new FileInfoQueue(); 
 	private FileInfoQueue mScanFileQueue = new FileInfoQueue();
@@ -379,8 +416,8 @@ public class CoverpageManager {
 	
 	private final Object LOCK = new Object();
 
-	private Runnable lastCheckCacheTask = null;
-	private Runnable lastScanFileTask = null;
+	private boolean isCheckingCache = false;
+	private boolean isScanningFile = false;
 	private BitmapCacheItem setItemState(ImageItem file, State state) {
 		synchronized(LOCK) {
 			BitmapCacheItem item = mCache.getItem(file);
@@ -419,7 +456,11 @@ public class CoverpageManager {
 					log.v("ready coverpages: " + list.size());
 			}
 			if (list.size() > 0) {
-				for (CoverpageReadyListener listener : listeners)
+				ArrayList<CoverpageReadyListener> copy;
+				synchronized(listeners) {
+					copy = new ArrayList<>(listeners);
+				}
+				for (CoverpageReadyListener listener : copy)
 					listener.onCoverpagesReady(list);
 				firstReadyTimestamp = Utils.timeStamp();
 			}
@@ -442,9 +483,15 @@ public class CoverpageManager {
 		if (bmp != null) {
 			// successfully decoded
 			log.v("coverpage is decoded for " + file);
-			item.setBitmap(bmp);
-			item.state = State.READY;
+			synchronized(LOCK) {
+				item.setBitmap(bmp);
+				item.state = State.READY;
+			}
 			notifyBitmapIsReady(file);
+		} else {
+			synchronized(LOCK) {
+				item.state = State.UNINITIALIZED;
+			}
 		}
 	}
 
@@ -454,63 +501,85 @@ public class CoverpageManager {
 		BackgroundThread.instance().postBackground(() -> draw(file, data));
 	}
 	private void scheduleCheckCache(final CRDBService.LocalBinder db) {
-		// cache lookup
-		lastCheckCacheTask = new Runnable() {
-			@Override
-			public void run() {
-				ImageItem file = null;
-				synchronized(LOCK) {
-					if (lastCheckCacheTask == this) {
-						file = mCheckFileCacheQueue.next();
-					}
-				}
-				if (file != null) {
-					final ImageItem request = file;
-					db.loadBookCoverpage(file.file, (fileInfo, data) -> {
-						if (data == null) {
-							log.v("cover not found in DB for " + fileInfo + ", scheduling scan");
-							mScanFileQueue.addOnTop(request);
-							scheduleScanFile(db);
-						} else {
-							coverpageLoaded(request, data);
-						}
-					});
-					scheduleCheckCache(db);
-				}
+		if (db == null)
+			return;
+		BackgroundThread.instance().postGUI(() -> {
+			synchronized (LOCK) {
+				if (isCheckingCache)
+					return;
+				isCheckingCache = true;
 			}
-		};
-		BackgroundThread.instance().postGUI(lastCheckCacheTask);
+			processNextCheckCache(db);
+		});
 	}
-	private void scheduleScanFile(final CRDBService.LocalBinder db) {
-		// file scan
-		lastScanFileTask = new Runnable() {
-			@Override
-			public void run() {
-				ImageItem file = null;
-				synchronized(LOCK) {
-					if (lastScanFileTask == this) {
-						file = mScanFileQueue.next();
-					}
-				}
-				if (file != null) {
-					final ImageItem fileInfo = file;
-					if (fileInfo.file.format.canParseCoverpages) {
-						BackgroundThread.instance().postBackground(() -> {
-							byte[] data = Services.getEngine().scanBookCover(fileInfo.file.getPathName());
-							if (data == null)
-								data = new byte[] {};
-							if (fileInfo.file.format.needCoverPageCaching())
-								db.saveBookCoverpage(fileInfo.file, data);
-							coverpageLoaded(fileInfo, data);
-						});
-					} else {
-						coverpageLoaded(fileInfo, new byte[] {});
-					}
-					scheduleScanFile(db);
-				}
+
+	private void processNextCheckCache(final CRDBService.LocalBinder db) {
+		ImageItem file;
+		synchronized (LOCK) {
+			file = mCheckFileCacheQueue.next();
+			if (file == null) {
+				isCheckingCache = false;
+				return;
 			}
-		};
-		BackgroundThread.instance().postGUI(lastScanFileTask);
+		}
+		final ImageItem request = file;
+		db.loadBookCoverpage(file.file, (fileInfo, data) -> {
+			if (data == null) {
+				log.v("cover not found in DB for " + fileInfo + ", scheduling scan");
+				synchronized (LOCK) {
+					mScanFileQueue.addOnTop(request);
+				}
+				scheduleScanFile(db);
+			} else {
+				coverpageLoaded(request, data);
+			}
+			BackgroundThread.instance().postGUI(() -> processNextCheckCache(db));
+		});
+	}
+
+	private void scheduleScanFile(final CRDBService.LocalBinder db) {
+		if (db == null)
+			return;
+		BackgroundThread.instance().postGUI(() -> {
+			synchronized (LOCK) {
+				if (isScanningFile)
+					return;
+				isScanningFile = true;
+			}
+			processNextScanFile(db);
+		});
+	}
+
+	private void processNextScanFile(final CRDBService.LocalBinder db) {
+		ImageItem file;
+		synchronized (LOCK) {
+			file = mScanFileQueue.next();
+			if (file == null) {
+				isScanningFile = false;
+				return;
+			}
+		}
+		final ImageItem fileInfo = file;
+		if (fileInfo.file != null && fileInfo.file.format != null && fileInfo.file.format.canParseCoverpages) {
+			BackgroundThread.instance().postBackground(() -> {
+				byte[] data = null;
+				try {
+					data = Services.getEngine().scanBookCover(fileInfo.file.getPathName());
+				} catch (Exception e) {
+					log.e("Exception while scanning cover for " + fileInfo + ": " + e);
+				}
+				if (data == null)
+					data = new byte[] {};
+				if (fileInfo.file.format.needCoverPageCaching())
+					db.saveBookCoverpage(fileInfo.file, data);
+				coverpageLoaded(fileInfo, data);
+
+				BackgroundThread.instance().postGUI(() -> processNextScanFile(db));
+			});
+		} else {
+			coverpageLoaded(fileInfo, new byte[] {});
+			BackgroundThread.instance().postGUI(() -> processNextScanFile(db));
+		}
 	}
 
 	private void queueForDrawing(final CRDBService.LocalBinder db, ImageItem file) {
@@ -648,7 +717,9 @@ public class CoverpageManager {
 					}
 				}
 				log.d("Image for " + book + " is not found in cache, scheduling generation...");
-				queueForDrawing(db, book);
+				CRDBService.LocalBinder curDb = db != null ? db : (dbProvider != null ? dbProvider.getDB() : null);
+				if (curDb != null)
+					queueForDrawing(curDb, book);
 				//if (h * bestWidth / bestHeight > w)
 				//canvas.drawRect(rc, defPaint);
 			} catch (Exception e) {
@@ -741,11 +812,18 @@ public class CoverpageManager {
 		} else if (view instanceof ImageView) {
 			if (view.getTag() instanceof CoverpageManager.ImageItem) {
 				CoverpageManager.ImageItem item = (CoverpageManager.ImageItem)view.getTag();
-				for (CoverpageManager.ImageItem v : files)
-					if (v.matches(item)) {
+				for (CoverpageManager.ImageItem v : files) {
+					if (v.fileMatches(item)) {
 						log.v("invalidating view for " + item);
-						view.invalidate();
+						ImageView iv = (ImageView) view;
+						Drawable d = iv.getDrawable();
+						if (d != null)
+							d.invalidateSelf();
+						iv.invalidate();
+						iv.postInvalidate();
+						break;
 					}
+				}
 			}
 		}
 	}
