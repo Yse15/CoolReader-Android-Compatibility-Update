@@ -14,6 +14,7 @@
  * Copyright (C) 2018-2022 Aleksey Chernov <valexlin@gmail.com>
  *
  * Modified 2024-11-25: Android 14+ receiver export flags, edge-to-edge insets handling,
+ *   display cutout safe area handling in fullscreen mode,
  *   default screen orientation changed to system (SCREEN_ORIENTATION_USER) for tablet/landscape support.
  *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
  *
@@ -702,7 +703,7 @@ public class BaseActivity extends Activity implements Settings {
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
 			try {
 				WindowManager.LayoutParams lp = wnd.getAttributes();
-				lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+				lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER;
 				wnd.setAttributes(lp);
 			} catch (Exception e) {
 				log.e("Error setting cutout mode", e);
@@ -737,6 +738,20 @@ public class BaseActivity extends Activity implements Settings {
 		if (decor == null)
 			decor = wnd.getDecorView();
 		if (decor != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+			if (Build.VERSION.SDK_INT >= 35) {
+				View contentView = wnd.findViewById(android.R.id.content);
+				if (contentView != null) {
+					contentView.setOnApplyWindowInsetsListener((v, insets) -> {
+						int types = mFullscreen
+								? WindowInsets.Type.displayCutout()
+								: (WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+						android.graphics.Insets safeInsets = insets.getInsets(types);
+						v.setPadding(safeInsets.left, safeInsets.top, safeInsets.right, safeInsets.bottom);
+						return insets;
+					});
+					contentView.requestApplyInsets();
+				}
+			}
 			decor.post(() -> {
 				try {
 					WindowInsetsController controller = wnd.getInsetsController();
