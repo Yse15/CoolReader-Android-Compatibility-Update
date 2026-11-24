@@ -1175,12 +1175,18 @@ public class CoolReader extends BaseActivity {
 		}
 		waitForCRDBService(() -> {
 			getDBService().setPathCorrector(Engine.getInstance(CoolReader.this).getPathCorrector());
-			getDB().reopenDatabase();
-			Services.getHistory().loadFromDB(getDB(), 200);
-			BackgroundThread.instance().postGUI(() -> {
-				if (mHomeFrame != null) {
-					mHomeFrame.refreshView();
+			getDB().reopenDatabase(() -> {
+				if (Services.getCoverpageManager() != null) {
+					Services.getCoverpageManager().clear();
+					Services.getCoverpageManager().setDBProvider(() -> getDB());
 				}
+				Services.getHistory().loadFromDB(getDB(), 200);
+				BackgroundThread.instance().postGUI(() -> {
+					if (mHomeFrame != null) {
+						mHomeFrame.refreshView();
+						Services.getCoverpageManager().addCoverpageReadyListener(mHomeFrame);
+					}
+				});
 			});
 		});
 		if (Engine.getExternalSettingsDirName() != null) {

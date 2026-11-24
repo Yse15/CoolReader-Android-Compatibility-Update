@@ -5,6 +5,10 @@
  * Copyright (C) 2018 Yuri Plotnikov <plotnikovya@gmail.com>
  * Copyright (C) 2018-2021 Aleksey Chernov <valexlin@gmail.com>
  *
+ * Modified 2024-11-25: Fixed .cr3 directory creation bug, added completion callback
+ *   to reopenDatabase for synchronized DB reload on modern Android versions.
+ *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
+ *
  * This program is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation, either version 2
@@ -29,6 +33,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.util.Log;
 
+import org.coolreader.crengine.BackgroundThread;
 import org.coolreader.crengine.BookInfo;
 import org.coolreader.crengine.Bookmark;
 import org.coolreader.crengine.DeviceInfo;
@@ -63,7 +68,11 @@ public class CRDBService extends BaseService {
     }
 
     public void reopenDatabase() {
-		execTask(new ReOpenDatabaseTask());
+		reopenDatabase(null);
+	}
+
+    public void reopenDatabase(final Runnable onComplete) {
+		execTask(new ReOpenDatabaseTask(onComplete));
 	}
 
     @Override
@@ -85,7 +94,7 @@ public class CRDBService extends BaseService {
     	//File storage = Environment.getExternalStorageDirectory();
     	File storage = DeviceInfo.EINK_NOOK ? new File("/media/") : Environment.getExternalStorageDirectory();
     	File cr3dir = new File(storage, ".cr3");
-    	if (cr3dir.isDirectory())
+    	if (!cr3dir.exists())
     		cr3dir.mkdirs();
     	if (!cr3dir.isDirectory() || !cr3dir.canWrite()) {
 	    	log.w("Cannot use " + cr3dir + " for writing database, will use data directory instead");
@@ -137,14 +146,23 @@ public class CRDBService extends BaseService {
     }
 
 	private class ReOpenDatabaseTask extends Task {
+		private final Runnable onComplete;
 		public ReOpenDatabaseTask() {
+			this(null);
+		}
+
+		public ReOpenDatabaseTask(Runnable onComplete) {
 			super("ReOpenDatabaseTask");
+			this.onComplete = onComplete;
 		}
 
 		@Override
 		public void work() {
 			close();
 			open();
+			if (onComplete != null) {
+				BackgroundThread.instance().postGUI(onComplete);
+			}
 		}
 
 		private boolean open() {
@@ -763,7 +781,11 @@ public class CRDBService extends BaseService {
     	}
 
     	public void reopenDatabase() {
-        	getService().reopenDatabase();
+        	getService().reopenDatabase(null);
+		}
+
+    	public void reopenDatabase(final Runnable onComplete) {
+        	getService().reopenDatabase(onComplete);
 		}
     }
 

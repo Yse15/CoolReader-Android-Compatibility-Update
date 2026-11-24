@@ -174,6 +174,8 @@ public class CoverpageManager {
 			mCheckFileCacheQueue.clear();
 			mScanFileQueue.clear();
 			mReadyQueue.clear();
+			isCheckingCache = false;
+			isScanningFile = false;
 		}
 	}
 	
@@ -523,18 +525,26 @@ public class CoverpageManager {
 			}
 		}
 		final ImageItem request = file;
-		db.loadBookCoverpage(file.file, (fileInfo, data) -> {
-			if (data == null) {
-				log.v("cover not found in DB for " + fileInfo + ", scheduling scan");
-				synchronized (LOCK) {
-					mScanFileQueue.addOnTop(request);
+		try {
+			db.loadBookCoverpage(file.file, (fileInfo, data) -> {
+				if (data == null) {
+					log.v("cover not found in DB for " + fileInfo + ", scheduling scan");
+					synchronized (LOCK) {
+						mScanFileQueue.addOnTop(request);
+					}
+					scheduleScanFile(db);
+				} else {
+					coverpageLoaded(request, data);
 				}
-				scheduleScanFile(db);
-			} else {
-				coverpageLoaded(request, data);
+				BackgroundThread.instance().postGUI(() -> processNextCheckCache(db));
+			});
+		} catch (Exception e) {
+			log.e("Error checking coverpage cache", e);
+			synchronized (LOCK) {
+				isCheckingCache = false;
 			}
 			BackgroundThread.instance().postGUI(() -> processNextCheckCache(db));
-		});
+		}
 	}
 
 	private void scheduleScanFile(final CRDBService.LocalBinder db) {
@@ -584,7 +594,12 @@ public class CoverpageManager {
 
 	private void queueForDrawing(final CRDBService.LocalBinder db, ImageItem file) {
 		synchronized (LOCK) {
-			if (file == null || file.file == null || file.file.format == null)
+			if (file == null || file.file == null)
+				return;
+			if (file.file.format == null && file.file.pathname != null) {
+				file.file.format = DocumentFormat.byExtension(file.file.pathname);
+			}
+			if (file.file.format == null)
 				return;
 			BitmapCacheItem item = mCache.getItem(file);
 			if (item != null && (item.state == State.READY || item.state == State.DRAWING))
@@ -791,7 +806,9 @@ public class CoverpageManager {
 	private Bitmap drawCoverpage(byte[] data, ImageItem file)
 	{
 		try {
-			Bitmap bmp = Bitmap.createBitmap(file.maxWidth, file.maxHeight, DeviceInfo.BUFFER_COLOR_FORMAT);
+			int w = file.maxWidth > 0 ? file.maxWidth : (maxWidth > 0 ? maxWidth : 110);
+			int h = file.maxHeight > 0 ? file.maxHeight : (maxHeight > 0 ? maxHeight : 140);
+			Bitmap bmp = Bitmap.createBitmap(w, h, DeviceInfo.BUFFER_COLOR_FORMAT);
 			Services.getEngine().drawBookCover(bmp, data, false, fontFace, file.file.getTitleOrFileName(), file.file.authors, file.file.series, file.file.seriesNumber, DeviceInfo.EINK_SCREEN ? 4 : 16);
 			return bmp;
 		} catch ( Exception e ) {

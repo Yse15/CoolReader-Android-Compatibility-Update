@@ -25,6 +25,7 @@
 
 package org.coolreader.crengine;
 
+import android.graphics.drawable.Drawable;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.MenuInflater;
@@ -262,6 +263,8 @@ public class CRRootView extends ViewGroup implements CoverpageReadyListener {
 				Services.getHistory().getOrLoadRecentBooks(mActivity.getDB(), bookList -> {
 					updateCurrentBook(bookList != null && bookList.size() > 0 ? bookList.get(0) : null);
 					updateRecentBooks(bookList);
+					if (this.mCoverpageManager != null)
+						this.mCoverpageManager.addCoverpageReadyListener(this);
 				});
 		}));
 	}
@@ -610,13 +613,43 @@ public class CRRootView extends ViewGroup implements CoverpageReadyListener {
 	public void onWindowFocusChanged(boolean hasWindowFocus) {
 		log.d("CRRootView.onWindowFocusChanged(" + hasWindowFocus + ")");
 		super.onWindowFocusChanged(hasWindowFocus);
+		if (hasWindowFocus) {
+			if (this.mCoverpageManager != null)
+				this.mCoverpageManager.addCoverpageReadyListener(this);
+			postInvalidate();
+		}
 	}
 
 	@Override
 	public void onCoverpagesReady(ArrayList<CoverpageManager.ImageItem> files) {
 		log.d("CRRootView.onCoverpagesReady(" + files + ")");
 		CoverpageManager.invalidateChildImages(mView, files);
+		if (mView != null) {
+			ImageView currentCover = mView.findViewById(R.id.book_cover);
+			if (currentCover != null) {
+				Drawable d = currentCover.getDrawable();
+				if (d != null)
+					d.invalidateSelf();
+				currentCover.invalidate();
+				currentCover.postInvalidate();
+			}
+		}
 		if (mRecentBooksScroll != null) {
+			for (int i = 0; i < mRecentBooksScroll.getChildCount(); i++) {
+				View child = mRecentBooksScroll.getChildAt(i);
+				if (child != null) {
+					ImageView iv = child.findViewById(R.id.book_cover);
+					if (iv != null) {
+						Drawable d = iv.getDrawable();
+						if (d != null)
+							d.invalidateSelf();
+						iv.invalidate();
+						iv.postInvalidate();
+					}
+					child.invalidate();
+					child.postInvalidate();
+				}
+			}
 			mRecentBooksScroll.invalidate();
 			mRecentBooksScroll.postInvalidate();
 		}
