@@ -272,8 +272,10 @@ public class CRRootView extends ViewGroup implements CoverpageReadyListener {
 	public void refreshOnlineCatalogs() {
 		mActivity.waitForCRDBService(() -> {
 			if (!Services.isStopped() && mActivity.getDB() != null) {
-				OPDSMirrorManager.ensureLocalPresets(mActivity, mActivity.getDB());
-				mActivity.getDB().loadOPDSCatalogs(this::updateOnlineCatalogs);
+				OPDSMirrorManager.ensureLocalPresets(mActivity, mActivity.getDB(), () -> {
+					if (!Services.isStopped() && mActivity.getDB() != null)
+						mActivity.getDB().loadOPDSCatalogs(this::updateOnlineCatalogs);
+				});
 			}
 		});
 	}

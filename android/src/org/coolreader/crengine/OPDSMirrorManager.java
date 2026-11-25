@@ -22,7 +22,7 @@ public class OPDSMirrorManager {
 	private static final Logger log = L.create("opdsm");
 	private static final String PREFS_NAME = "opds_mirrors";
 	private static final String KEY_FLIBUSTA_ACTIVE = "flibusta_active_url";
-	private static final String KEY_LOCAL_PRESETS_SIG = "local_presets_sig";
+	private static final String KEY_LOCAL_PRESETS_SIG = "local_presets_sig_v2";
 	private static final int PROBE_TIMEOUT_MS = 5000;
 	private static final int ORBOT_CHECK_TIMEOUT_MS = 500;
 	private static final String ORBOT_HOST = "127.0.0.1";
@@ -109,36 +109,48 @@ public class OPDSMirrorManager {
 	}
 
 	/**
-	 * Seeds local-only OPDS presets once per configuration signature so user edits/deletions are preserved.
+	 * Seeds local-only OPDS presets once per configuration signature after confirming DB is open.
 	 */
-	public static void ensureLocalPresets(Context context, CRDBService.LocalBinder db) {
-		if (context == null || db == null)
+	public static void ensureLocalPresets(final Context context, final CRDBService.LocalBinder db, final Runnable onSeeded) {
+		if (context == null || db == null) {
+			if (onSeeded != null)
+				onSeeded.run();
 			return;
-		String sig = BuildConfig.FLIBUSTA_MIRRORS + "|" + BuildConfig.LOCAL_OPDS_CATALOGS;
-		if (sig.equals("|"))
-			return;
-		SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-		String prevSig = prefs.getString(KEY_LOCAL_PRESETS_SIG, "");
-		if (sig.equals(prevSig))
-			return;
-		prefs.edit().putString(KEY_LOCAL_PRESETS_SIG, sig).apply();
-
-		String activeFlibusta = getActiveFlibustaMirror(context);
-		if (activeFlibusta != null) {
-			db.saveOPDSCatalog(null, activeFlibusta, "Flibusta", null, null);
 		}
-		String rawCatalogs = BuildConfig.LOCAL_OPDS_CATALOGS;
-		if (rawCatalogs != null && !rawCatalogs.trim().isEmpty()) {
-			for (String entry : rawCatalogs.split(";")) {
-				String[] parts = entry.split("\\|", 2);
-				if (parts.length == 2) {
-					String url = parts[0].trim();
-					String name = parts[1].trim();
-					if (!url.isEmpty() && !name.isEmpty())
-						db.saveOPDSCatalog(null, url, name, null, null);
+		final String sig = BuildConfig.FLIBUSTA_MIRRORS + "|" + BuildConfig.LOCAL_OPDS_CATALOGS;
+		if (sig.equals("|")) {
+			if (onSeeded != null)
+				onSeeded.run();
+			return;
+		}
+		final SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+		final String prevSig = prefs.getString(KEY_LOCAL_PRESETS_SIG, "");
+		if (sig.equals(prevSig)) {
+			if (onSeeded != null)
+				onSeeded.run();
+			return;
+		}
+		db.loadOPDSCatalogs(existing -> {
+			String activeFlibusta = getActiveFlibustaMirror(context);
+			if (activeFlibusta != null) {
+				db.saveOPDSCatalog(null, activeFlibusta, "Flibusta", null, null);
+			}
+			String rawCatalogs = BuildConfig.LOCAL_OPDS_CATALOGS;
+			if (rawCatalogs != null && !rawCatalogs.trim().isEmpty()) {
+				for (String entry : rawCatalogs.split(";")) {
+					String[] parts = entry.split("\\|", 2);
+					if (parts.length == 2) {
+						String url = parts[0].trim();
+						String name = parts[1].trim();
+						if (!url.isEmpty() && !name.isEmpty())
+							db.saveOPDSCatalog(null, url, name, null, null);
+					}
 				}
 			}
-		}
+			prefs.edit().putString(KEY_LOCAL_PRESETS_SIG, sig).apply();
+			if (onSeeded != null)
+				onSeeded.run();
+		});
 	}
 
 	public static void probeMirrorsAsync(final Context context, final String failedUrl, final ProbeCallback callback) {
