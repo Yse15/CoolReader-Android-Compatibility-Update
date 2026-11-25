@@ -7,7 +7,7 @@
  * Copyright (C) 2018 Yuri Plotnikov <plotnikovya@gmail.com>
  * Copyright (C) 2020,2021 Aleksey Chernov <valexlin@gmail.com>
  *
- * Modified 2024-11-25: OPDS catalog DB initialization fixes, schema migrations.
+ * Modified 2024-11-25: OPDS catalog DB initialization fixes, schema migrations (DB v36: Lib.ru).
  *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
  *
  * This program is free software: you can redistribute it and/or
@@ -60,7 +60,7 @@ public class MainDB extends BaseDB {
 	public static final Logger vlog = L.create("mdb", Log.VERBOSE);
 	
 	private boolean pathCorrectionRequired = false;
-	public final int DB_VERSION = 35;
+	public final int DB_VERSION = 36;
 	@Override
 	protected boolean upgradeSchema() {
 		// When the database is just created, its version is 0.
@@ -333,6 +333,12 @@ public class MainDB extends BaseDB {
 				});
 			}
 
+			if (currentVersion < 36) {
+				addOPDSCatalogs(new String[] {
+						"http://lib.ru/opds/", "Lib.ru",
+				});
+			}
+
 			//==============================================================
 			// add more updates above this line
 				
@@ -481,12 +487,8 @@ public class MainDB extends BaseDB {
 	};
 
 	private final static String[] DEF_OPDS_URLS3 = {
-			// o'reilly
-			//"http://opds.oreilly.com/opds/", "O'Reilly",
-			// removed in DB v35 (503/403): Project Gutenberg, Gallica (fr)
-			//"https://api.gitbook.com/opds/catalog.atom", "GitBook",
+			"http://lib.ru/opds/", "Lib.ru",
 			"https://manybooks.net/opds", "ManyBooks",
-			//"http://opds.openedition.org/", "OpenEdition (fr)",
 			"https://www.textos.info/catalogo.atom", "textos.info (es)",
 			"https://wolnelektury.pl/opds/", "Wolne Lektury (pl)",
 			"http://www.bokselskap.no/wp-content/themes/bokselskap/tekster/opds/root.xml", "Bokselskap (no)",

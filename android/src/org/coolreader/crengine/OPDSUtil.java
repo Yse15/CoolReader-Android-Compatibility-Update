@@ -6,7 +6,8 @@
  *
  * Modified 2024-11-25: Removed broken/outdated OPDS catalog entries (Internet Archive,
  *   Project Gutenberg, Gallica), updated ManyBooks to direct OPDS URL,
- *   added Standard Ebooks catalog.
+ *   added Standard Ebooks catalog, fixed HTML entity sanitization (&nbsp; etc.)
+ *   and relative URL resolution in OPDS feeds (fixes Lib.ru).
  *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
  *
  * This program is free software: you can redistribute it and/or
@@ -169,7 +170,10 @@ xml:base="http://lib.ololo.cc/opds/">
 			if ( href.startsWith("/") )
 				return baseURL.getProtocol() + "://" + hostPort + href;
 			if ( !href.startsWith("http://") && !href.startsWith("https://") ) {
-				return baseURL.getProtocol() + "://" + hostPort + dirPath(baseURL.getPath()) + "/" + href;
+				String dir = dirPath(baseURL.getPath());
+				if (!dir.endsWith("/"))
+					dir = dir + "/";
+				return baseURL.getProtocol() + "://" + hostPort + dir + href;
 			}
 			return href;
 		}
@@ -605,8 +609,20 @@ xml:base="http://lib.ololo.cc/opds/">
 //				spf.setNamespaceAware(true);
 //				spf.setFeature("http://xml.org/sax/features/namespaces", false);
 				SAXParser sp = spf.newSAXParser();
-				//XMLReader xr = sp.getXMLReader();				
-				sp.parse(is, handler);
+				java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+				byte[] buf = new byte[8192];
+				int n;
+				while ((n = is.read(buf)) >= 0) {
+					if (n > 0)
+						baos.write(buf, 0, n);
+				}
+				String xml = baos.toString("UTF-8")
+						.replace("&nbsp;", "&#160;")
+						.replace("&ndash;", "&#8211;")
+						.replace("&mdash;", "&#8212;")
+						.replace("&laquo;", "&#171;")
+						.replace("&raquo;", "&#187;");
+				sp.parse(new ByteArrayInputStream(xml.getBytes("UTF-8")), handler);
 			} catch (SAXException se) {
 				L.e("sax error", se);
 				throw se;
