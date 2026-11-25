@@ -11,12 +11,12 @@ android {
         targetSdkVersion 35
         // When new version released, version code must be incremented at least by 8
         // for compatibility with ABI versioning of split apk (see below).
-        versionCode 32570
-        versionName "3.2.59-1"
+        versionCode 33000
+        versionName "3.3"
         testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
-                arguments "-DANDROID_STL=c++_static"
+                arguments "-DANDROID_STL=c++_static", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
                 cppFlags ""
             }
         }
