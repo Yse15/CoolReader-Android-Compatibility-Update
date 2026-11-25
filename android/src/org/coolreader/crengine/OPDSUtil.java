@@ -4,10 +4,9 @@
  * Copyright (C) 2012 Daniel Savard <daniels@xsoli.com>
  * Copyright (C) 2018 Aleksey Chernov <valexlin@gmail.com>
  *
- * Modified 2024-11-25: Removed broken/outdated OPDS catalog entries (Internet Archive,
- *   Project Gutenberg, Gallica), updated ManyBooks to direct OPDS URL,
- *   added Standard Ebooks catalog, fixed HTML entity sanitization (&nbsp; etc.)
- *   and relative URL resolution in OPDS feeds (fixes Lib.ru).
+ * Modified 2024-11-26: Transport hygiene (removed http.keepAlive=false and global
+ *   trust-all SSLSocketFactory, fixed Basic auth prefix, safe redirect handling,
+ *   buffered ProgressInputStream.read) and disk cache (sha1 key, TTL + ETag/Last-Modified 304).
  *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
  *
  * This program is free software: you can redistribute it and/or
@@ -36,7 +35,9 @@ import org.xml.sax.SAXException;
 import org.xml.sax.helpers.DefaultHandler;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -47,19 +48,16 @@ import java.net.PasswordAuthentication;
 import java.net.Proxy;
 import java.net.URL;
 import java.net.URLConnection;
-import java.security.cert.X509Certificate;
+import java.security.MessageDigest;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.Properties;
 import java.util.Stack;
 import java.util.concurrent.Callable;
 
-import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 
@@ -743,6 +741,100 @@ xml:base="http://lib.ololo.cc/opds/">
 			return Base64.encodeToString((username + ":" + password).getBytes(), Base64.NO_WRAP);
 		}
 
+		private static final long OPDS_CACHE_TTL_MS = 60 * 60 * 1000L; // 1 hour
+
+		private static class CacheMeta {
+			long timestamp;
+			String etag;
+			String lastModified;
+			String contentType;
+		}
+
+		private static String sha1Hex(String input) {
+			try {
+				MessageDigest md = MessageDigest.getInstance("SHA-1");
+				byte[] digest = md.digest(input.getBytes("UTF-8"));
+				StringBuilder sb = new StringBuilder(digest.length * 2);
+				for (byte b : digest) {
+					sb.append(Character.forDigit((b >> 4) & 0xF, 16));
+					sb.append(Character.forDigit(b & 0xF, 16));
+				}
+				return sb.toString();
+			} catch (Exception e) {
+				return Integer.toHexString(input.hashCode());
+			}
+		}
+
+		private File getOpdsCacheDir() {
+			File dir = new File(coolReader.getCacheDir(), "opds");
+			if (!dir.exists())
+				dir.mkdirs();
+			return dir;
+		}
+
+		private static byte[] readAllBytes(InputStream is) throws IOException {
+			ByteArrayOutputStream baos = new ByteArrayOutputStream();
+			byte[] buf = new byte[8192];
+			int n;
+			while ((n = is.read(buf)) >= 0) {
+				if (n > 0)
+					baos.write(buf, 0, n);
+			}
+			return baos.toByteArray();
+		}
+
+		private CacheMeta readCacheMeta(File metaFile) {
+			if (!metaFile.exists())
+				return null;
+			Properties p = new Properties();
+			try (FileInputStream fis = new FileInputStream(metaFile)) {
+				p.load(fis);
+				CacheMeta meta = new CacheMeta();
+				meta.timestamp = Long.parseLong(p.getProperty("timestamp", "0"));
+				meta.etag = p.getProperty("etag", null);
+				meta.lastModified = p.getProperty("lastModified", null);
+				meta.contentType = p.getProperty("contentType", null);
+				return meta;
+			} catch (Exception e) {
+				return null;
+			}
+		}
+
+		private void writeCacheEntry(File bodyFile, File metaFile, byte[] data, CacheMeta meta) {
+			try (FileOutputStream fos = new FileOutputStream(bodyFile)) {
+				fos.write(data);
+			} catch (Exception e) {
+				L.w("Failed to write OPDS cache body", e);
+				return;
+			}
+			writeCacheMeta(metaFile, meta);
+		}
+
+		private void writeCacheMeta(File metaFile, CacheMeta meta) {
+			Properties p = new Properties();
+			p.setProperty("timestamp", Long.toString(meta.timestamp));
+			if (meta.etag != null)
+				p.setProperty("etag", meta.etag);
+			if (meta.lastModified != null)
+				p.setProperty("lastModified", meta.lastModified);
+			if (meta.contentType != null)
+				p.setProperty("contentType", meta.contentType);
+			try (FileOutputStream fos = new FileOutputStream(metaFile)) {
+				p.store(fos, null);
+			} catch (Exception e) {
+				L.w("Failed to write OPDS cache meta", e);
+			}
+		}
+
+		private static boolean isXmlFeedContentType(String contentType) {
+			if (contentType == null)
+				return false;
+			String lower = contentType.toLowerCase();
+			return lower.startsWith("application/atom+xml")
+					|| lower.startsWith("application/xml")
+					|| lower.startsWith("text/xml");
+		}
+
 		public void runInternal() {
 			connection = null;
 			
@@ -755,6 +847,40 @@ xml:base="http://lib.ololo.cc/opds/">
 					setProgressMessage( url.toString(), -1 );
 					visited.add(url.toString());
 					long startTimeStamp = System.currentTimeMillis();
+					boolean useCache = (expectedType == null) && (username == null || username.length() == 0);
+					File cacheBodyFile = null;
+					File cacheMetaFile = null;
+					CacheMeta cachedMeta = null;
+					if (useCache) {
+						String key = sha1Hex(url.toString());
+						File cacheDir = getOpdsCacheDir();
+						cacheBodyFile = new File(cacheDir, key + ".body");
+						cacheMetaFile = new File(cacheDir, key + ".meta");
+						if (cacheBodyFile.exists()) {
+							cachedMeta = readCacheMeta(cacheMetaFile);
+							if (cachedMeta != null && (startTimeStamp - cachedMeta.timestamp) < OPDS_CACHE_TTL_MS) {
+								try (FileInputStream fis = new FileInputStream(cacheBodyFile)) {
+									byte[] cachedBytes = readAllBytes(fis);
+									if (delayedProgress != null)
+										delayedProgress.cancel();
+									parseFeed(new ByteArrayInputStream(cachedBytes));
+									itemsLoadedPartially = true;
+									if (handler.docInfo.nextLink != null && handler.docInfo.nextLink.type != null
+											&& handler.docInfo.nextLink.type.startsWith("application/atom+xml;profile=opds-catalog")
+											&& handler.entries.size() < MAX_OPDS_ITEMS) {
+										url = new URL(handler.docInfo.nextLink.href);
+										loadNext = !visited.contains(url.toString());
+									} else {
+										loadNext = false;
+									}
+									partialDownloadCompleted = true;
+									continue;
+								} catch (Exception cacheEx) {
+									L.w("OPDS cache read failed, fetching from network", cacheEx);
+								}
+							}
+						}
+					}
 					if (!partialDownloadCompleted) {
 						if (delayedProgress != null)
 							delayedProgress.cancel();
@@ -763,7 +889,7 @@ xml:base="http://lib.ololo.cc/opds/">
 					URL newURL = url;
 					boolean useOrobotProxy = false;
 					String host = url.getHost();
-					if (host.endsWith(".onion"))
+					if (host != null && host.endsWith(".onion"))
 					    useOrobotProxy = true;
 					String oldAddress = url.toString();
 					if (oldAddress.startsWith("orobot://")) {
@@ -776,41 +902,12 @@ xml:base="http://lib.ololo.cc/opds/">
 					    L.d("Converting url - " + oldAddress + " to " + newURL + " for using ORobot proxy");
 					}
 					Proxy proxy = null;
-                    System.setProperty("http.keepAlive", "false");					
 					if (useOrobotProxy) {
-                        // Set-up proxy
-                        //System.setProperty("http.proxyHost", "127.0.0.1");
-                        //System.setProperty("http.proxyPort", "8118");
-					    //L.d("Using ORobot proxy: " + proxy);
 					    proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress("127.0.0.1", 8118)); // ORobot proxy running on this device
 					    L.d("Using ORobot proxy: " + proxy);
-					} else {
-                        //System.clearProperty("http.proxyHost");
-                        //System.clearProperty("http.proxyPort");
 					}
 				    
 					URLConnection conn = proxy == null ? newURL.openConnection() : newURL.openConnection(proxy);
-					if ( conn instanceof HttpsURLConnection ) {
-	                	HttpsURLConnection https = (HttpsURLConnection)conn;
-
-	                    // Create a trust manager that does not validate certificate chains
-	                    TrustManager[] trustAllCerts = new TrustManager[] { new X509TrustManager() {
-	                        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
-	                            return null;
-	                        }
-	                        public void checkClientTrusted(X509Certificate[] certs, String authType) {
-	                        }
-	                        public void checkServerTrusted(X509Certificate[] certs, String authType) {
-	                        }
-	                    } };
-	                    // Install the all-trusting trust manager
-	                    final SSLContext sc = SSLContext.getInstance("TLS");
-	                    sc.init(null, trustAllCerts, new java.security.SecureRandom());
-	                    HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
-	                    https.setSSLSocketFactory(sc.getSocketFactory());
-	                    
-	                	https.setHostnameVerifier((arg0, arg1) -> true);
-					}
 					if ( !(conn instanceof HttpURLConnection) ) {
 						onError("Only HTTP supported");
 						return;
@@ -819,11 +916,16 @@ xml:base="http://lib.ololo.cc/opds/">
 		            connection.setRequestProperty("User-Agent", "CoolReader/3(Android)");
 		            if ( referer!=null )
 		            	connection.setRequestProperty("Referer", referer);
-		            connection.setInstanceFollowRedirects(true);
-	                connection.setUseCaches(false);
+		            connection.setInstanceFollowRedirects(false);
+		            if (cachedMeta != null && cacheBodyFile != null && cacheBodyFile.exists()) {
+		            	if (cachedMeta.etag != null && cachedMeta.etag.length() > 0)
+		            		connection.setRequestProperty("If-None-Match", cachedMeta.etag);
+		            	if (cachedMeta.lastModified != null && cachedMeta.lastModified.length() > 0)
+		            		connection.setRequestProperty("If-Modified-Since", cachedMeta.lastModified);
+		            }
 		            
 	                if (username != null && username.length() > 0 && password != null && password.length() > 0) {
-	                	connection.setRequestProperty("Authorization", encodePassword(username, password));
+	                	connection.setRequestProperty("Authorization", "Basic " + encodePassword(username, password));
 	                	Authenticator.setDefault(new Authenticator() {
 	                	    protected PasswordAuthentication getPasswordAuthentication() {
 	                	        return new PasswordAuthentication(username, password.toCharArray());
@@ -842,13 +944,32 @@ xml:base="http://lib.ololo.cc/opds/">
 		            		fileName = disp.substring(p + 9);
 		            	}
 		            }
-		            //connection.setDoOutput(true);
-		            //connection.set
 		            
 		            int response = -1;
 					
 					response = connection.getResponseCode();
 					if (EXTENDED_LOG) L.d("Response: " + response);
+					if ( response == HttpURLConnection.HTTP_NOT_MODIFIED && cachedMeta != null && cacheBodyFile != null && cacheBodyFile.exists() ) {
+						cachedMeta.timestamp = System.currentTimeMillis();
+						writeCacheMeta(cacheMetaFile, cachedMeta);
+						try (FileInputStream fis = new FileInputStream(cacheBodyFile)) {
+							byte[] cachedBytes = readAllBytes(fis);
+							if (delayedProgress != null)
+								delayedProgress.cancel();
+							parseFeed(new ByteArrayInputStream(cachedBytes));
+							itemsLoadedPartially = true;
+							if (handler.docInfo.nextLink != null && handler.docInfo.nextLink.type != null
+									&& handler.docInfo.nextLink.type.startsWith("application/atom+xml;profile=opds-catalog")
+									&& handler.entries.size() < MAX_OPDS_ITEMS) {
+								url = new URL(handler.docInfo.nextLink.href);
+								loadNext = !visited.contains(url.toString());
+							} else {
+								loadNext = false;
+							}
+							partialDownloadCompleted = true;
+							continue;
+						}
+					}
 					if ( response == 301 || response == 302 || response == 307 || response == 303 ) {
 						// redirects
 						String redirect = connection.getHeaderField("Location");
@@ -856,8 +977,7 @@ xml:base="http://lib.ololo.cc/opds/">
 							onError("Invalid redirect " + response);
 							return;
 						}
-						L.d("continue with next part: " + url);
-						url = new URL(redirect);
+						url = new URL(newURL, redirect);
 						if (visited.contains(url.toString())) {
 							onError("Duplicate redirect " + url);
 							return;
@@ -877,7 +997,6 @@ xml:base="http://lib.ololo.cc/opds/">
 					String contentType = connection.getContentType();
 					String contentEncoding = connection.getContentEncoding();
 					int contentLen = connection.getContentLength();
-					//connection.getC
 					if (EXTENDED_LOG) L.d("Entity content length: " + contentLen);
 					if (EXTENDED_LOG) L.d("Entity content type: " + contentType);
 					if (EXTENDED_LOG) L.d("Entity content encoding: " + contentEncoding);
@@ -890,23 +1009,27 @@ xml:base="http://lib.ololo.cc/opds/">
 					boolean isZip = contentType!=null && contentType.equals("application/zip");
 					if ( expectedType!=null )
 						contentType = expectedType;
-					else if ( contentLen>0 && contentLen<MAX_CONTENT_LEN_TO_BUFFER) { // autodetect type
-						byte[] buf = new byte[contentLen];
-						if ( is.read(buf)!=contentLen ) {
-							onError("Wrong content length");
-							return;
-						}
+					else if ( !isXmlFeedContentType(contentType) && contentLen>0 && contentLen<MAX_CONTENT_LEN_TO_BUFFER ) { // autodetect type
+						byte[] buf = readAllBytes(is);
 						is.close();
-						is = null;
 						is = new ByteArrayInputStream(buf);
-						if ( findSubstring(buf, "<?xml version=")>=0 && findSubstring(buf, "<feed")>=0  )
+						if ( findSubstring(buf, "<?xml version=")>=0 && findSubstring(buf, "<feed")>=0 )
 							contentType = "application/atom+xml"; // override type
 					}
-					if ( contentType.startsWith("application/atom+xml") ) {
+					if ( isXmlFeedContentType(contentType) ) {
 						if (EXTENDED_LOG) L.d("Parsing feed");
-						parseFeed( is );
+						byte[] feedBytes = readAllBytes(is);
+						if (useCache && cacheBodyFile != null && cacheMetaFile != null) {
+							CacheMeta newMeta = new CacheMeta();
+							newMeta.timestamp = System.currentTimeMillis();
+							newMeta.etag = connection.getHeaderField("ETag");
+							newMeta.lastModified = connection.getHeaderField("Last-Modified");
+							newMeta.contentType = contentType;
+							writeCacheEntry(cacheBodyFile, cacheMetaFile, feedBytes, newMeta);
+						}
+						parseFeed(new ByteArrayInputStream(feedBytes));
 						itemsLoadedPartially = true;
-						if (handler.docInfo.nextLink!=null && handler.docInfo.nextLink.type.startsWith("application/atom+xml;profile=opds-catalog")) {
+						if (handler.docInfo.nextLink!=null && handler.docInfo.nextLink.type != null && handler.docInfo.nextLink.type.startsWith("application/atom+xml;profile=opds-catalog")) {
 							if (handler.entries.size() < MAX_OPDS_ITEMS) {
 								url = new URL(handler.docInfo.nextLink.href);
 								loadNext = !visited.contains(url.toString());
@@ -1041,13 +1164,27 @@ xml:base="http://lib.ololo.cc/opds/">
 			
 			@Override
 			public int read() throws IOException {
-				bytesRead++;
-				updateProgress();
-				return sourceStream.read();
+				int b = sourceStream.read();
+				if (b >= 0) {
+					bytesRead++;
+					updateProgress();
+				}
+				return b;
+			}
+
+			@Override
+			public int read(byte[] b, int off, int len) throws IOException {
+				int n = sourceStream.read(b, off, len);
+				if (n > 0) {
+					bytesRead += n;
+					updateProgress();
+				}
+				return n;
 			}
 
 			@Override
 			public void close() throws IOException {
+				sourceStream.close();
 				super.close();
 			}
 		}
