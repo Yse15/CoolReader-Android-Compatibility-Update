@@ -684,12 +684,13 @@ public class FileBrowser extends LinearLayout implements FileInfoChangeListener 
 			mActivity.refreshOPDSRootDirectory(false);
 		}
 		
-		String url = fileOrDir.getOPDSUrl();
+		final String url = fileOrDir.getOPDSUrl();
 		final FileInfo myCurrDirectory = prevDir;
 		if ( url!=null ) {
 			try {
 				final URL uri = new URL(url);
 				final OPDSUtil.DownloadTask[] downloadTaskHolder = new OPDSUtil.DownloadTask[1];
+				final boolean[] mirrorRotated = { false };
 				DownloadCallback callback = new DownloadCallback() {
 
 					private boolean processNewEntries(DocInfo doc,
@@ -717,6 +718,11 @@ public class FileBrowser extends LinearLayout implements FileInfoChangeListener 
 								file.parent = fileOrDir;
 								file.tag = entry;
 								items.add(file);
+								if (coverPagesEnabled && entry.icon != null) {
+									final FileInfo coverFile = file;
+									OPDSUtil.fetchCoverAsync(mActivity, entry.icon, url, fileOrDir.username, fileOrDir.password,
+											data -> setCoverpageData(coverFile, data));
+								}
 							} else if ( entry.link.type!=null && entry.link.type.startsWith("application/atom+xml") ) {
 								FileInfo file = new FileInfo();
 								file.isDirectory = true;
@@ -757,6 +763,28 @@ public class FileBrowser extends LinearLayout implements FileInfoChangeListener 
 
 					@Override
 					public void onError(String message) {
+						if (!mirrorRotated[0] && OPDSMirrorManager.isFlibustaMirrorUrl(url)) {
+							mirrorRotated[0] = true;
+							OPDSMirrorManager.probeMirrorsAsync(mActivity, url, new OPDSMirrorManager.ProbeCallback() {
+								@Override
+								public void onMirrorFound(String workingBaseUrl) {
+									String rotatedUrl = OPDSMirrorManager.replaceMirrorBase(url, workingBaseUrl);
+									fileOrDir.pathname = FileInfo.OPDS_DIR_PREFIX + rotatedUrl;
+									if (fileOrDir.id != null && fileOrDir.id > 0) {
+										mActivity.getDB().saveOPDSCatalog(fileOrDir.id, workingBaseUrl, fileOrDir.filename, fileOrDir.username, fileOrDir.password);
+										mActivity.refreshOPDSRootDirectory(false);
+									}
+									showOPDSDir(fileOrDir, itemToSelect);
+								}
+
+								@Override
+								public void onNoMirrorFound() {
+									mEngine.hideProgress();
+									mActivity.showToast(message);
+								}
+							});
+							return;
+						}
 						mEngine.hideProgress();
 						mActivity.showToast(message);
 					}

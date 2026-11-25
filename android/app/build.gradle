@@ -5,7 +5,22 @@ android {
     compileSdkVersion 35
     buildToolsVersion "35.0.0"
     ndkVersion "27.0.12077973"
+
+    def localOpdsCatalogs = ""
+    def flibustaMirrors = ""
+    if (!project.hasProperty("PUBLIC_BUILD")) {
+        def localOpdsFile = rootProject.file("../local_opds.properties")
+        if (localOpdsFile.exists()) {
+            def props = new Properties()
+            localOpdsFile.withInputStream { props.load(it) }
+            localOpdsCatalogs = props.getProperty("LOCAL_OPDS_CATALOGS", "")
+            flibustaMirrors = props.getProperty("FLIBUSTA_MIRRORS", "")
+        }
+    }
+
     defaultConfig {
+        buildConfigField "String", "LOCAL_OPDS_CATALOGS", "\"${localOpdsCatalogs.replace('\"', '\\\"')}\""
+        buildConfigField "String", "FLIBUSTA_MIRRORS", "\"${flibustaMirrors.replace('\"', '\\\"')}\""
         applicationId "org.coolreader"
         minSdkVersion 21
         targetSdkVersion 35
@@ -127,6 +142,7 @@ android {
 
     buildFeatures {
         aidl true
+        buildConfig true
     }
 
     packagingOptions {

@@ -57,6 +57,8 @@ import java.util.HashSet;
 import java.util.Properties;
 import java.util.Stack;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
@@ -415,9 +417,15 @@ xml:base="http://lib.ololo.cc/opds/">
 							if ( link.type.startsWith("application/atom+xml") ) {
 								if (entryInfo.link == null || !entryInfo.link.type.startsWith("application/atom+xml"))
 									entryInfo.link = link;
-							} else if ( "http://opds-spec.org/cover".equals(link.rel) && "image/jpeg".equals(link.type)) {
+							} else if ( link.type.startsWith("image/") &&
+									("http://opds-spec.org/image/thumbnail".equals(link.rel)
+									|| "http://opds-spec.org/thumbnail".equals(link.rel)
+									|| "x-stanza-cover-image-thumbnail".equals(link.rel)) ) {
 								entryInfo.icon = link.href;
-							} else if ( "http://opds-spec.org/thumbnail".equals(link.rel) && "image/jpeg".equals(link.type)) {
+							} else if ( link.type.startsWith("image/") &&
+									("http://opds-spec.org/image".equals(link.rel)
+									|| "http://opds-spec.org/cover".equals(link.rel)
+									|| "x-stanza-cover-image".equals(link.rel)) ) {
 								if (entryInfo.icon == null)
 									entryInfo.icon = link.href;
 							} else if (priority>0 && (entryInfo.link==null || entryInfo.link.getPriority()<priority)) {
@@ -766,64 +774,23 @@ xml:base="http://lib.ololo.cc/opds/">
 		}
 
 		private File getOpdsCacheDir() {
-			File dir = new File(coolReader.getCacheDir(), "opds");
-			if (!dir.exists())
-				dir.mkdirs();
-			return dir;
+			return OPDSUtil.getOpdsCacheDir(coolReader);
 		}
 
 		private static byte[] readAllBytes(InputStream is) throws IOException {
-			ByteArrayOutputStream baos = new ByteArrayOutputStream();
-			byte[] buf = new byte[8192];
-			int n;
-			while ((n = is.read(buf)) >= 0) {
-				if (n > 0)
-					baos.write(buf, 0, n);
-			}
-			return baos.toByteArray();
+			return OPDSUtil.readAllBytes(is, -1);
 		}
 
 		private CacheMeta readCacheMeta(File metaFile) {
-			if (!metaFile.exists())
-				return null;
-			Properties p = new Properties();
-			try (FileInputStream fis = new FileInputStream(metaFile)) {
-				p.load(fis);
-				CacheMeta meta = new CacheMeta();
-				meta.timestamp = Long.parseLong(p.getProperty("timestamp", "0"));
-				meta.etag = p.getProperty("etag", null);
-				meta.lastModified = p.getProperty("lastModified", null);
-				meta.contentType = p.getProperty("contentType", null);
-				return meta;
-			} catch (Exception e) {
-				return null;
-			}
+			return OPDSUtil.readCacheMeta(metaFile);
 		}
 
 		private void writeCacheEntry(File bodyFile, File metaFile, byte[] data, CacheMeta meta) {
-			try (FileOutputStream fos = new FileOutputStream(bodyFile)) {
-				fos.write(data);
-			} catch (Exception e) {
-				L.w("Failed to write OPDS cache body", e);
-				return;
-			}
-			writeCacheMeta(metaFile, meta);
+			OPDSUtil.writeCacheEntry(bodyFile, metaFile, data, meta);
 		}
 
 		private void writeCacheMeta(File metaFile, CacheMeta meta) {
-			Properties p = new Properties();
-			p.setProperty("timestamp", Long.toString(meta.timestamp));
-			if (meta.etag != null)
-				p.setProperty("etag", meta.etag);
-			if (meta.lastModified != null)
-				p.setProperty("lastModified", meta.lastModified);
-			if (meta.contentType != null)
-				p.setProperty("contentType", meta.contentType);
-			try (FileOutputStream fos = new FileOutputStream(metaFile)) {
-				p.store(fos, null);
-			} catch (Exception e) {
-				L.w("Failed to write OPDS cache meta", e);
-			}
+			OPDSUtil.writeCacheMeta(metaFile, meta);
 		}
 
 		private static boolean isXmlFeedContentType(String contentType) {
@@ -1214,6 +1181,174 @@ xml:base="http://lib.ololo.cc/opds/">
 		}
 	}
 	
+	public interface CoverCallback {
+		void onCoverLoaded(byte[] data);
+	}
+
+	private static final ExecutorService COVER_EXECUTOR = Executors.newFixedThreadPool(2);
+	private static final int MAX_COVER_BYTES = 2 * 1024 * 1024;
+	private static final long COVER_CACHE_TTL_MS = 24 * 60 * 60 * 1000L; // 24 hours
+
+	private static File getOpdsCacheDir(CoolReader coolReader) {
+		File dir = new File(coolReader.getCacheDir(), "opds");
+		if (!dir.exists())
+			dir.mkdirs();
+		return dir;
+	}
+
+	private static byte[] readAllBytes(InputStream is, int maxBytes) throws IOException {
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		byte[] buf = new byte[8192];
+		int total = 0;
+		int n;
+		while ((n = is.read(buf)) >= 0) {
+			if (n > 0) {
+				total += n;
+				if (maxBytes > 0 && total > maxBytes)
+					throw new IOException("Response exceeds max size: " + maxBytes);
+				baos.write(buf, 0, n);
+			}
+		}
+		return baos.toByteArray();
+	}
+
+	private static DownloadTask.CacheMeta readCacheMeta(File metaFile) {
+		if (!metaFile.exists())
+			return null;
+		Properties p = new Properties();
+		try (FileInputStream fis = new FileInputStream(metaFile)) {
+			p.load(fis);
+			DownloadTask.CacheMeta meta = new DownloadTask.CacheMeta();
+			meta.timestamp = Long.parseLong(p.getProperty("timestamp", "0"));
+			meta.etag = p.getProperty("etag", null);
+			meta.lastModified = p.getProperty("lastModified", null);
+			meta.contentType = p.getProperty("contentType", null);
+			return meta;
+		} catch (Exception e) {
+			return null;
+		}
+	}
+
+	private static void writeCacheEntry(File bodyFile, File metaFile, byte[] data, DownloadTask.CacheMeta meta) {
+		try (FileOutputStream fos = new FileOutputStream(bodyFile)) {
+			fos.write(data);
+		} catch (Exception e) {
+			L.w("Failed to write OPDS cache body", e);
+			return;
+		}
+		writeCacheMeta(metaFile, meta);
+	}
+
+	private static void writeCacheMeta(File metaFile, DownloadTask.CacheMeta meta) {
+		Properties p = new Properties();
+		p.setProperty("timestamp", Long.toString(meta.timestamp));
+		if (meta.etag != null)
+			p.setProperty("etag", meta.etag);
+		if (meta.lastModified != null)
+			p.setProperty("lastModified", meta.lastModified);
+		if (meta.contentType != null)
+			p.setProperty("contentType", meta.contentType);
+		try (FileOutputStream fos = new FileOutputStream(metaFile)) {
+			p.store(fos, null);
+		} catch (Exception e) {
+			L.w("Failed to write OPDS cache meta", e);
+		}
+	}
+
+	/**
+	 * Fetches an OPDS cover image using the shared transport and disk cache.
+	 */
+	public static void fetchCoverAsync(final CoolReader coolReader, final String coverUrl, final String referer,
+			final String username, final String password, final CoverCallback callback) {
+		if (coolReader == null || coverUrl == null || coverUrl.trim().isEmpty() || callback == null)
+			return;
+		COVER_EXECUTOR.submit(() -> {
+			HttpURLConnection conn = null;
+			try {
+				String key = DownloadTask.sha1Hex("cover:" + coverUrl);
+				File cacheDir = getOpdsCacheDir(coolReader);
+				File bodyFile = new File(cacheDir, key + ".body");
+				File metaFile = new File(cacheDir, key + ".meta");
+				DownloadTask.CacheMeta meta = readCacheMeta(metaFile);
+				long now = System.currentTimeMillis();
+				if (meta != null && bodyFile.exists() && (now - meta.timestamp) < COVER_CACHE_TTL_MS) {
+					try (FileInputStream fis = new FileInputStream(bodyFile)) {
+						final byte[] cached = readAllBytes(fis, MAX_COVER_BYTES);
+						BackgroundThread.instance().executeGUI(() -> callback.onCoverLoaded(cached));
+						return;
+					}
+				}
+				URL url = new URL(coverUrl);
+				for (int redirects = 0; redirects < 5; redirects++) {
+					boolean useOrobot = (url.getHost() != null && url.getHost().endsWith(".onion"))
+							|| url.toString().startsWith("orobot://") || url.toString().startsWith("orobots://");
+					URL target = url;
+					if (url.toString().startsWith("orobot://"))
+						target = new URL("http://" + url.toString().substring(9));
+					else if (url.toString().startsWith("orobots://"))
+						target = new URL("https://" + url.toString().substring(10));
+					Proxy proxy = useOrobot ? new Proxy(Proxy.Type.HTTP, new InetSocketAddress("127.0.0.1", 8118)) : null;
+					URLConnection raw = proxy == null ? target.openConnection() : target.openConnection(proxy);
+					if (!(raw instanceof HttpURLConnection))
+						return;
+					conn = (HttpURLConnection) raw;
+					conn.setInstanceFollowRedirects(false);
+					conn.setRequestProperty("User-Agent", "CoolReader/3(Android)");
+					if (referer != null)
+						conn.setRequestProperty("Referer", referer);
+					if (username != null && !username.isEmpty() && password != null && !password.isEmpty())
+						conn.setRequestProperty("Authorization", "Basic " + DownloadTask.encodePassword(username, password));
+					if (meta != null && bodyFile.exists()) {
+						if (meta.etag != null && !meta.etag.isEmpty())
+							conn.setRequestProperty("If-None-Match", meta.etag);
+						if (meta.lastModified != null && !meta.lastModified.isEmpty())
+							conn.setRequestProperty("If-Modified-Since", meta.lastModified);
+					}
+					conn.setConnectTimeout(CONNECT_TIMEOUT);
+					conn.setReadTimeout(READ_TIMEOUT);
+					int code = conn.getResponseCode();
+					if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP
+							|| code == HttpURLConnection.HTTP_SEE_OTHER || code == 307 || code == 308) {
+						String loc = conn.getHeaderField("Location");
+						conn.disconnect();
+						conn = null;
+						if (loc == null)
+							return;
+						url = new URL(target, loc);
+						continue;
+					}
+					if (code == HttpURLConnection.HTTP_NOT_MODIFIED && bodyFile.exists()) {
+						meta.timestamp = System.currentTimeMillis();
+						writeCacheMeta(metaFile, meta);
+						try (FileInputStream fis = new FileInputStream(bodyFile)) {
+							final byte[] cached = readAllBytes(fis, MAX_COVER_BYTES);
+							BackgroundThread.instance().executeGUI(() -> callback.onCoverLoaded(cached));
+							return;
+						}
+					}
+					if (code != HttpURLConnection.HTTP_OK)
+						return;
+					try (InputStream is = conn.getInputStream()) {
+						final byte[] data = readAllBytes(is, MAX_COVER_BYTES);
+						DownloadTask.CacheMeta newMeta = new DownloadTask.CacheMeta();
+						newMeta.timestamp = System.currentTimeMillis();
+						newMeta.etag = conn.getHeaderField("ETag");
+						newMeta.lastModified = conn.getHeaderField("Last-Modified");
+						newMeta.contentType = conn.getContentType();
+						writeCacheEntry(bodyFile, metaFile, data, newMeta);
+						BackgroundThread.instance().executeGUI(() -> callback.onCoverLoaded(data));
+						return;
+					}
+				}
+			} catch (Exception e) {
+				L.d("OPDS cover fetch failed for " + coverUrl + ": " + e.getMessage());
+			} finally {
+				if (conn != null)
+					conn.disconnect();
+			}
+		});
+	}
+
 	public static final int PROGRESS_DELAY_MILLIS = 2000;
 	public static final int MAX_OPDS_ITEMS = 1000;
 }
