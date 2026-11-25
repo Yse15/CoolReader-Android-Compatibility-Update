@@ -6,6 +6,9 @@
  * Copyright (C) 2013 Alexey Kabelitskiy <akabelytskyi@hmstn.com>
  * Copyright (C) 2018,2020,2021 Aleksey Chernov <valexlin@gmail.com>
  *
+ * Modified 2024-11-26: Added OPDS catalog OpenSearch support in showFindBookDialog().
+ *   (This fork: https://github.com/Yse15/CoolReader-Android-Compatibility-Update)
+ *
  * This program is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation, either version 2
@@ -458,6 +461,13 @@ public class FileBrowser extends LinearLayout implements FileInfoChangeListener 
 	
 	public void showFindBookDialog()
 	{
+		if (currDirectory != null && (currDirectory.isOPDSDir() || currDirectory.isOPDSBook())) {
+			final String searchTemplate = currDirectory.getOPDSSearchUrl();
+			if (searchTemplate != null) {
+				showOPDSSearchDialog(searchTemplate);
+				return;
+			}
+		}
 		BookSearchDialog dlg = new BookSearchDialog( mActivity, results -> {
 			if (results != null) {
 				if (results.length == 0) {
@@ -469,6 +479,50 @@ public class FileBrowser extends LinearLayout implements FileInfoChangeListener 
 				if (currDirectory == null || currDirectory.isRootDir())
 					mActivity.showRootWindow();
 			}
+		});
+		dlg.show();
+	}
+
+	private void showOPDSSearchDialog(final String searchTemplate) {
+		android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(mActivity);
+		builder.setTitle(R.string.dlg_book_search);
+		final android.widget.EditText input = new android.widget.EditText(mActivity);
+		input.setSingleLine(true);
+		input.setHint(R.string.dlg_book_search);
+		int pad = (int) (16 * mActivity.getResources().getDisplayMetrics().density);
+		LinearLayout container = new LinearLayout(mActivity);
+		container.setOrientation(LinearLayout.VERTICAL);
+		container.setPadding(pad, pad / 2, pad, 0);
+		container.addView(input);
+		builder.setView(container);
+		Runnable performSearch = () -> {
+			String query = input.getText() != null ? input.getText().toString().trim() : "";
+			if (query.length() == 0)
+				return;
+			try {
+				String encoded = java.net.URLEncoder.encode(query, "UTF-8");
+				String searchUrl = searchTemplate.contains("{searchTerms}")
+						? searchTemplate.replace("{searchTerms}", encoded)
+						: (searchTemplate + encoded);
+				FileInfo searchDir = new FileInfo();
+				searchDir.isDirectory = true;
+				searchDir.pathname = FileInfo.OPDS_DIR_PREFIX + searchUrl;
+				searchDir.filename = query;
+				searchDir.parent = currDirectory;
+				searchDir.opdsSearchUrl = searchTemplate;
+				showOPDSDir(searchDir, null);
+			} catch (Exception e) {
+				log.e("OPDS search error", e);
+				mActivity.showToast("OPDS search error");
+			}
+		};
+		builder.setPositiveButton(android.R.string.ok, (dialog, which) -> performSearch.run());
+		builder.setNegativeButton(android.R.string.cancel, (dialog, which) -> dialog.cancel());
+		final android.app.AlertDialog dlg = builder.create();
+		input.setOnEditorActionListener((v, actionId, event) -> {
+			dlg.dismiss();
+			performSearch.run();
+			return true;
 		});
 		dlg.show();
 	}
@@ -641,6 +695,8 @@ public class FileBrowser extends LinearLayout implements FileInfoChangeListener 
 					private boolean processNewEntries(DocInfo doc,
 							Collection<EntryInfo> entries, boolean notifyNoEntries) {
 						log.d("OPDS: processNewEntries: " + entries.size() + (notifyNoEntries ? " - done":" - to continue"));
+						if (doc != null && doc.searchLink != null && doc.searchLink.href != null)
+							fileOrDir.opdsSearchUrl = doc.searchLink.href;
 						if (myCurrDirectory != currDirectory && currDirectory != fileOrDir) {
 							log.w("current directory has been changed: ignore downloaded items");
 							return false;

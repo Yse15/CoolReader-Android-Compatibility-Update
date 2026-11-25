@@ -138,6 +138,7 @@ xml:base="http://lib.ololo.cc/opds/">
 		public LinkInfo selfLink;
 		public LinkInfo alternateLink;
 		public LinkInfo nextLink;
+		public LinkInfo searchLink;
 	}
 	
 	public static String dirPath(String filePath) {
@@ -432,6 +433,8 @@ xml:base="http://lib.ololo.cc/opds/">
 							docInfo.alternateLink = link;
 						else if ( "next".equals(link.rel) )
 							docInfo.nextLink = link;
+						else if ( "search".equals(link.rel) && link.type != null && link.type.startsWith("application/atom+xml") )
+							docInfo.searchLink = link;
 					}
 				}
 			} else if ( "author".equals(localName) ) {

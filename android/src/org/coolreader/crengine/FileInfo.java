@@ -584,6 +584,16 @@ public class FileInfo implements Parcelable {
 		return pathname.startsWith(".");
 	}
 	
+	public String opdsSearchUrl;
+
+	public String getOPDSSearchUrl() {
+		if (opdsSearchUrl != null && opdsSearchUrl.length() > 0)
+			return opdsSearchUrl;
+		if (parent != null)
+			return parent.getOPDSSearchUrl();
+		return null;
+	}
+
 	public String getOPDSUrl()
 	{
 		if ( !pathname.startsWith(OPDS_DIR_PREFIX) )
