@@ -703,14 +703,28 @@ public class BaseActivity extends Activity implements Settings {
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
 			try {
 				WindowManager.LayoutParams lp = wnd.getAttributes();
-				lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+				lp.layoutInDisplayCutoutMode = mFullscreen
+						? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+						: WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
 				wnd.setAttributes(lp);
 			} catch (Exception e) {
 				log.e("Error setting cutout mode", e);
 			}
 		}
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && !mFullscreen) {
+			try {
+				wnd.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS
+						| WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
+				wnd.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+				wnd.setStatusBarColor(android.graphics.Color.BLACK);
+				wnd.setNavigationBarColor(android.graphics.Color.BLACK);
+			} catch (Exception e) {
+				log.e("Error setting system bar colors", e);
+			}
+		}
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
 			try {
+				wnd.setDecorFitsSystemWindows(!mFullscreen);
 				WindowInsetsController insetsController = wnd.getInsetsController();
 				if (insetsController != null) {
 					if (mFullscreen) {
@@ -718,6 +732,9 @@ public class BaseActivity extends Activity implements Settings {
 						insetsController.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
 					} else {
 						insetsController.show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+						insetsController.setSystemBarsAppearance(0,
+								WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+										| WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
 					}
 				}
 			} catch (Exception e) {
@@ -733,6 +750,56 @@ public class BaseActivity extends Activity implements Settings {
 		// enforce new window ui visibility flags
 		lastSystemUiVisibility = -1;
 		setSystemUiVisibility();
+
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
+			View contentView = wnd.findViewById(android.R.id.content);
+			if (contentView != null) {
+				if (!mFullscreen) {
+					View decorView = wnd.getDecorView();
+					if (decorView != null) {
+						decorView.setBackgroundColor(android.graphics.Color.BLACK);
+					}
+					contentView.setBackground(null);
+				}
+				contentView.setOnApplyWindowInsetsListener((v, insets) -> {
+					if (!mFullscreen && v instanceof android.view.ViewGroup) {
+						android.view.ViewGroup vg = (android.view.ViewGroup) v;
+						if (vg.getChildCount() > 0) {
+							View child = vg.getChildAt(0);
+							if (child.getBackground() == null) {
+								android.util.TypedValue tv = new android.util.TypedValue();
+								if (wnd.getContext().getTheme().resolveAttribute(android.R.attr.windowBackground, tv, true)) {
+									if (tv.resourceId != 0)
+										child.setBackgroundResource(tv.resourceId);
+									else if (tv.type >= android.util.TypedValue.TYPE_FIRST_COLOR_INT
+											&& tv.type <= android.util.TypedValue.TYPE_LAST_COLOR_INT)
+										child.setBackgroundColor(tv.data);
+								}
+							}
+						}
+					}
+					if (mFullscreen) {
+						v.setPadding(0, 0, 0, 0);
+						return insets;
+					}
+					if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+						android.graphics.Insets sys = insets.getInsets(
+								WindowInsets.Type.systemBars()
+										| WindowInsets.Type.displayCutout()
+										| WindowInsets.Type.ime());
+						v.setPadding(sys.left, sys.top, sys.right, sys.bottom);
+						return WindowInsets.CONSUMED;
+					}
+					v.setPadding(
+							insets.getSystemWindowInsetLeft(),
+							insets.getSystemWindowInsetTop(),
+							insets.getSystemWindowInsetRight(),
+							insets.getSystemWindowInsetBottom());
+					return insets.consumeSystemWindowInsets();
+				});
+				contentView.requestApplyInsets();
+			}
+		}
 
 		View decor = wnd.peekDecorView();
 		if (decor == null)

@@ -579,6 +579,35 @@ public class CRToolBar extends ViewGroup {
 		scroll.setLayoutParams(new LayoutParams(w, h/2));
 		scroll.setVerticalFadingEdgeEnabled(true);
 		scroll.setFadingEdgeLength(h / 10);
+
+		int safeLeft = 0, safeTop = 0, safeRight = 0, safeBottom = 0;
+		if (context.isFullscreen() && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P && anchor != null) {
+			android.view.WindowInsets rootInsets = anchor.getRootWindowInsets();
+			if (rootInsets != null) {
+				android.view.DisplayCutout cutout = rootInsets.getDisplayCutout();
+				if (cutout != null) {
+					safeLeft = Math.max(safeLeft, cutout.getSafeInsetLeft());
+					safeTop = Math.max(safeTop, cutout.getSafeInsetTop());
+					safeRight = Math.max(safeRight, cutout.getSafeInsetRight());
+					safeBottom = Math.max(safeBottom, cutout.getSafeInsetBottom());
+				}
+				if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+					android.view.RoundedCorner c;
+					if ((c = rootInsets.getRoundedCorner(android.view.RoundedCorner.POSITION_TOP_LEFT)) != null)
+						safeTop = Math.max(safeTop, c.getRadius());
+					if ((c = rootInsets.getRoundedCorner(android.view.RoundedCorner.POSITION_TOP_RIGHT)) != null)
+						safeTop = Math.max(safeTop, c.getRadius());
+					if ((c = rootInsets.getRoundedCorner(android.view.RoundedCorner.POSITION_BOTTOM_LEFT)) != null)
+						safeBottom = Math.max(safeBottom, c.getRadius());
+					if ((c = rootInsets.getRoundedCorner(android.view.RoundedCorner.POSITION_BOTTOM_RIGHT)) != null)
+						safeBottom = Math.max(safeBottom, c.getRadius());
+				}
+			}
+		}
+		if (safeLeft > 0 || safeTop > 0 || safeRight > 0 || safeBottom > 0) {
+			scroll.setPadding(safeLeft, safeTop, safeRight, safeBottom);
+			scroll.setClipToPadding(false);
+		}
 		final PopupWindow popup = new PopupWindow(context);
 		tb.setPopup(popup, popupLocation);
 		ReaderAction longMenuAction = null;
@@ -627,7 +656,7 @@ public class CRToolBar extends ViewGroup {
 		});
 		//popup.setBackgroundDrawable(new BitmapDrawable());
 		popup.setWidth(WindowManager.LayoutParams.FILL_PARENT);
-		int hh = h;
+		int hh = h + safeTop + safeBottom;
 		int maxh = anchor.getHeight();
 		if (hh > maxh - context.getPreferredItemHeight())
 			hh = maxh - context.getPreferredItemHeight() * 3 / 2;
