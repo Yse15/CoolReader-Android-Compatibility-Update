@@ -123,6 +123,9 @@ public class BaseDialog extends Dialog {
 		if ( layoutView==null ) {
 			layoutView = createLayout(view);
 			setContentView(layoutView);
+			if (activity != null) {
+				activity.applyFullscreen(getWindow());
+			}
 		}
 		contentsLayout.removeAllViews();
 		if (null != view)

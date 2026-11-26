@@ -1038,6 +1038,22 @@ JNIEXPORT jboolean JNICALL Java_org_coolreader_crengine_Engine_setCacheDirectory
 
 /*
  * Class:     org_coolreader_crengine_Engine
+ * Method:    setStorageFactorInternal
+ * Signature: (F)V
+ */
+JNIEXPORT void JNICALL Java_org_coolreader_crengine_Engine_setStorageFactorInternal
+  (JNIEnv *, jclass, jfloat factor)
+{
+	float clamped = factor;
+	if (clamped < 1.0f)
+		clamped = 1.0f;
+	else if (clamped > 8.0f)
+		clamped = 8.0f;
+	setStorageMaxUncompressedSizeFactor(clamped);
+}
+
+/*
+ * Class:     org_coolreader_crengine_Engine
  * Method:    checkFontLanguageCompatibilityInternal
  * Signature: (Ljava/lang/String;Ljava/lang/String;)Z
  */
@@ -1239,6 +1255,7 @@ static JNINativeMethod sEngineMethods[] = {
   {"getAvailableFontWeightInternal", "(Ljava/lang/String;)[I", (void*)Java_org_coolreader_crengine_Engine_getAvailableFontWeightInternal},
   {"getAvailableSynthFontWeightInternal", "()[I", (void*)Java_org_coolreader_crengine_Engine_getAvailableSynthFontWeightInternal},
   {"setCacheDirectoryInternal", "(Ljava/lang/String;I)Z", (void*)Java_org_coolreader_crengine_Engine_setCacheDirectoryInternal},
+  {"setStorageFactorInternal", "(F)V", (void*)Java_org_coolreader_crengine_Engine_setStorageFactorInternal},
   {"scanBookPropertiesInternal", "(Lorg/coolreader/crengine/FileInfo;)Z", (void*)Java_org_coolreader_crengine_Engine_scanBookPropertiesInternal},
   {"updateFileCRC32Internal", "(Lorg/coolreader/crengine/FileInfo;)Z", (void*)Java_org_coolreader_crengine_Engine_updateFileCRC32Internal},
   {"isArchiveInternal", "(Ljava/lang/String;)Z", (void*)Java_org_coolreader_crengine_Engine_isArchiveInternal},

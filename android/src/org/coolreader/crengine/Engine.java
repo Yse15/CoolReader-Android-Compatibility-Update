@@ -504,6 +504,8 @@ public class Engine {
 								}
 							});
 							mProgress.show();
+							if (mActivity.isFullscreen())
+								mActivity.applyFullscreen(mProgress.getWindow());
 							progressShown = true;
 						}
 					} catch (Exception e) {
@@ -518,6 +520,8 @@ public class Engine {
 					mProgress.setMessage(msg);
 					if (!mProgress.isShowing()) {
 						mProgress.show();
+						if (mActivity != null && mActivity.isFullscreen())
+							mActivity.applyFullscreen(mProgress.getWindow());
 						progressShown = true;
 					}
 				}
@@ -555,6 +559,8 @@ public class Engine {
 					log.w("Exception while dismissing progress dialog", e);
 				}
 				mProgress = null;
+				if (mActivity != null && mActivity.isFullscreen())
+					mActivity.applyFullscreen(mActivity.getWindow());
 //					log.v("hideProgress() - in GUI thread, finished");
 			}
 		});
@@ -660,6 +666,40 @@ public class Engine {
 	 */
 	private Engine(BaseActivity activity) {
 		setParams(activity);
+		applyAdaptiveStorageFactor(activity);
+	}
+
+	private static void applyAdaptiveStorageFactor(android.content.Context context) {
+		float factor = 1.0f;
+		try {
+			android.app.ActivityManager am = (android.app.ActivityManager) context.getSystemService(android.content.Context.ACTIVITY_SERVICE);
+			if (am != null) {
+				android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+				am.getMemoryInfo(mi);
+				long mem = mi.totalMem;
+				if (mem < (2L << 30))
+					factor = 1.0f;
+				else if (mem < (4L << 30))
+					factor = 3.0f;
+				else if (mem < (6L << 30))
+					factor = 4.0f;
+				else
+					factor = 6.0f;
+				if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+					if (!android.os.Process.is64Bit())
+						factor = Math.min(factor, 3.0f);
+				} else {
+					factor = Math.min(factor, 3.0f);
+				}
+				if (mi.lowMemory)
+					factor = 1.0f;
+				log.i("Adaptive DOM storage factor=" + factor + " (totalMem=" + (mem >> 20) + " MB, availMem=" + (mi.availMem >> 20) + " MB, lowMemory=" + mi.lowMemory + ")");
+			}
+		} catch (Throwable t) {
+			log.w("Failed to compute adaptive storage factor, using 1.0: " + t);
+			factor = 1.0f;
+		}
+		setStorageFactorInternal(factor);
 	}
 
 	public void initAgain() {
@@ -673,10 +713,13 @@ public class Engine {
 		}
 		mFonts = findFonts();
 		findExternalHyphDictionaries();
+		if (mActivity != null)
+			applyAdaptiveStorageFactor(mActivity);
 		if (!initInternal(mFonts, DeviceInfo.getSDKLevel())) {
 			log.i("Engine.initInternal failed!");
 			throw new RuntimeException("Cannot initialize CREngine JNI");
 		}
+		initDictionaries(HyphDict.values());
 		initCacheDirectory();
 		log.i("Engine() : initialization done");
 	}
@@ -703,6 +746,8 @@ public class Engine {
 	private native static boolean setKeyBacklightInternal(int value);
 
 	private native static boolean setCacheDirectoryInternal(String dir, int size);
+
+	private native static void setStorageFactorInternal(float factor);
 
 	private native static boolean scanBookPropertiesInternal(FileInfo info);
 
@@ -1098,7 +1143,7 @@ public class Engine {
 		return setKeyBacklightInternal(value);
 	}
 
-	final static int CACHE_DIR_SIZE = 32000000;
+	static int CACHE_DIR_SIZE = 32000000;
 
 	private static String createCacheDir(File baseDir, String subDir) {
 		String cacheDirName = null;
@@ -1228,6 +1273,13 @@ public class Engine {
 //		}
 		// set cache directory for engine
 		if (cacheDirName != null) {
+			try {
+				android.os.StatFs stat = new android.os.StatFs(cacheDirName);
+				long avail = stat.getAvailableBytes();
+				CACHE_DIR_SIZE = (int) Math.max(32_000_000L, Math.min(256L << 20, avail / 10));
+			} catch (Throwable t) {
+				log.w("StatFs failed for cache dir, using default CACHE_DIR_SIZE: " + t);
+			}
 			log.i(cacheDirName
 					+ " will be used for cache, maxCacheSize=" + CACHE_DIR_SIZE);
 			setCacheDirectoryInternal(cacheDirName, CACHE_DIR_SIZE);

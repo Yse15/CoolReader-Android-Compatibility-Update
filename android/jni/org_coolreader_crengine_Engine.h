@@ -117,6 +117,14 @@ JNIEXPORT jboolean JNICALL Java_org_coolreader_crengine_Engine_setCacheDirectory
 
 /*
  * Class:     org_coolreader_crengine_Engine
+ * Method:    setStorageFactorInternal
+ * Signature: (F)V
+ */
+JNIEXPORT void JNICALL Java_org_coolreader_crengine_Engine_setStorageFactorInternal
+  (JNIEnv *, jclass, jfloat);
+
+/*
+ * Class:     org_coolreader_crengine_Engine
  * Method:    scanBookPropertiesInternal
  * Signature: (Lorg/coolreader/crengine/FileInfo;)Z
  */

@@ -260,6 +260,7 @@ public class BaseActivity extends Activity implements Settings {
 	}
 
 	protected BaseDialog currentDialog;
+	private int activePopupCount = 0;
 	public void onDialogCreated(BaseDialog dlg) {
 		currentDialog = dlg;
 	}
@@ -268,11 +269,19 @@ public class BaseActivity extends Activity implements Settings {
     		currentDialog = null;
 		}
 	}
+	public void onPopupOpened() {
+		activePopupCount++;
+	}
+	public void onPopupClosed() {
+		if (activePopupCount > 0) {
+			activePopupCount--;
+		}
+	}
 	public BaseDialog getCurrentDialog() {
     	return currentDialog;
 	}
 	public boolean isDialogActive() {
-    	return currentDialog != null;
+    	return currentDialog != null || activePopupCount > 0;
 	}
 
 	@Override
@@ -697,6 +706,25 @@ public class BaseActivity extends Activity implements Settings {
 		return mFullscreen;
 	}
 
+	private static void applyWindowBackgroundToContentChild(Window wnd, View contentView) {
+		if (wnd == null || !(contentView instanceof android.view.ViewGroup))
+			return;
+		android.view.ViewGroup vg = (android.view.ViewGroup) contentView;
+		if (vg.getChildCount() <= 0)
+			return;
+		View child = vg.getChildAt(0);
+		if (child.getBackground() != null)
+			return;
+		android.util.TypedValue tv = new android.util.TypedValue();
+		if (wnd.getContext().getTheme().resolveAttribute(android.R.attr.windowBackground, tv, true)) {
+			if (tv.resourceId != 0)
+				child.setBackgroundResource(tv.resourceId);
+			else if (tv.type >= android.util.TypedValue.TYPE_FIRST_COLOR_INT
+					&& tv.type <= android.util.TypedValue.TYPE_LAST_COLOR_INT)
+				child.setBackgroundColor(tv.data);
+		}
+	}
+
 	public void applyFullscreen(Window wnd) {
 		if (wnd == null)
 			return;
@@ -711,7 +739,7 @@ public class BaseActivity extends Activity implements Settings {
 				log.e("Error setting cutout mode", e);
 			}
 		}
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && !mFullscreen) {
+		if (Build.VERSION.SDK_INT >= 35 && !mFullscreen) {
 			try {
 				wnd.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS
 						| WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
@@ -722,7 +750,7 @@ public class BaseActivity extends Activity implements Settings {
 				log.e("Error setting system bar colors", e);
 			}
 		}
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && wnd.peekDecorView() != null) {
 			try {
 				wnd.setDecorFitsSystemWindows(!mFullscreen);
 				WindowInsetsController insetsController = wnd.getInsetsController();
@@ -747,11 +775,15 @@ public class BaseActivity extends Activity implements Settings {
 		} else {
 			wnd.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
 		}
-		// enforce new window ui visibility flags
-		lastSystemUiVisibility = -1;
-		setSystemUiVisibility();
+		// enforce new window ui visibility flags on pre-R devices only;
+		// on API 30+ WindowInsetsController manages system bars and calling
+		// legacy setSystemUiVisibility() resets behavior back to DEFAULT.
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+			lastSystemUiVisibility = -1;
+			setSystemUiVisibility();
+		}
 
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
+		if (Build.VERSION.SDK_INT >= 35) {
 			View contentView = wnd.findViewById(android.R.id.content);
 			if (contentView != null) {
 				if (!mFullscreen) {
@@ -760,42 +792,22 @@ public class BaseActivity extends Activity implements Settings {
 						decorView.setBackgroundColor(android.graphics.Color.BLACK);
 					}
 					contentView.setBackground(null);
+					applyWindowBackgroundToContentChild(wnd, contentView);
 				}
 				contentView.setOnApplyWindowInsetsListener((v, insets) -> {
-					if (!mFullscreen && v instanceof android.view.ViewGroup) {
-						android.view.ViewGroup vg = (android.view.ViewGroup) v;
-						if (vg.getChildCount() > 0) {
-							View child = vg.getChildAt(0);
-							if (child.getBackground() == null) {
-								android.util.TypedValue tv = new android.util.TypedValue();
-								if (wnd.getContext().getTheme().resolveAttribute(android.R.attr.windowBackground, tv, true)) {
-									if (tv.resourceId != 0)
-										child.setBackgroundResource(tv.resourceId);
-									else if (tv.type >= android.util.TypedValue.TYPE_FIRST_COLOR_INT
-											&& tv.type <= android.util.TypedValue.TYPE_LAST_COLOR_INT)
-										child.setBackgroundColor(tv.data);
-								}
-							}
-						}
+					if (!mFullscreen) {
+						applyWindowBackgroundToContentChild(wnd, v);
 					}
 					if (mFullscreen) {
 						v.setPadding(0, 0, 0, 0);
 						return insets;
 					}
-					if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-						android.graphics.Insets sys = insets.getInsets(
-								WindowInsets.Type.systemBars()
-										| WindowInsets.Type.displayCutout()
-										| WindowInsets.Type.ime());
-						v.setPadding(sys.left, sys.top, sys.right, sys.bottom);
-						return WindowInsets.CONSUMED;
-					}
-					v.setPadding(
-							insets.getSystemWindowInsetLeft(),
-							insets.getSystemWindowInsetTop(),
-							insets.getSystemWindowInsetRight(),
-							insets.getSystemWindowInsetBottom());
-					return insets.consumeSystemWindowInsets();
+					android.graphics.Insets sys = insets.getInsets(
+							WindowInsets.Type.systemBars()
+									| WindowInsets.Type.displayCutout()
+									| WindowInsets.Type.ime());
+					v.setPadding(sys.left, sys.top, sys.right, sys.bottom);
+					return WindowInsets.CONSUMED;
 				});
 				contentView.requestApplyInsets();
 			}
@@ -870,6 +882,10 @@ public class BaseActivity extends Activity implements Settings {
 	@TargetApi(Build.VERSION_CODES.HONEYCOMB)
 	@SuppressLint("NewApi")
 	public boolean setSystemUiVisibility() {
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+			applyFullscreen(getWindow());
+			return true;
+		}
 		if (DeviceInfo.getSDKLevel() >= DeviceInfo.HONEYCOMB) {
 			int flags = 0;
 			if (getKeyBacklight() == 0) {

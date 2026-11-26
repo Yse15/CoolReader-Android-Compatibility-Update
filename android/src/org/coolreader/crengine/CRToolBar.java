@@ -667,11 +667,11 @@ public class CRToolBar extends ViewGroup {
 		if (hh > maxh - context.getPreferredItemHeight())
 			hh = maxh - context.getPreferredItemHeight() * 3 / 2;
 		popup.setHeight(hh);
-		popup.setFocusable(true);
-		popup.setFocusable(true);
+		final boolean fullscreen = context != null && context.isFullscreen();
+		popup.setFocusable(!fullscreen);
 		popup.setTouchable(true);
 		popup.setOutsideTouchable(true);
-		if (context.isFullscreen())
+		if (fullscreen)
 			popup.setClippingEnabled(false);
 		popup.setContentView(scroll);
 		InterfaceTheme theme = context.getCurrentTheme();
@@ -681,9 +681,15 @@ public class CRToolBar extends ViewGroup {
 		else
 			bg = Utils.solidColorDrawable(theme.getPopupToolbarBackgroundColor());
 		popup.setBackgroundDrawable(bg);
+		if (context != null) {
+			context.onPopupOpened();
+		}
 		popup.setOnDismissListener(() -> {
-			if (context != null && context.isFullscreen()) {
-				context.applyFullscreen(context.getWindow());
+			if (context != null) {
+				context.onPopupClosed();
+				if (context.isFullscreen()) {
+					context.applyFullscreen(context.getWindow());
+				}
 			}
 		});
 		int [] location = new int[2];
@@ -693,6 +699,30 @@ public class CRToolBar extends ViewGroup {
 			popup.showAtLocation(anchor, Gravity.BOTTOM | Gravity.FILL_HORIZONTAL, 0, 0); //location[0], popupY - anchor.getHeight());
 		else
 			popup.showAtLocation(anchor, Gravity.TOP | Gravity.FILL_HORIZONTAL, 0, 0); //, location[0], popupY);
+		if (fullscreen) {
+			View popupRoot = scroll.getRootView();
+			if (popupRoot != null) {
+				if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+					android.view.WindowInsetsController ic = popupRoot.getWindowInsetsController();
+					if (ic != null) {
+						ic.hide(android.view.WindowInsets.Type.statusBars()
+								| android.view.WindowInsets.Type.navigationBars());
+						ic.setSystemBarsBehavior(
+								android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+					}
+				} else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+					popupRoot.setSystemUiVisibility(
+							View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+									| View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+									| View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+									| View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+									| View.SYSTEM_UI_FLAG_FULLSCREEN
+									| View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+				}
+			}
+			popup.setFocusable(true);
+			popup.update();
+		}
 		return popup;
 	}
 	

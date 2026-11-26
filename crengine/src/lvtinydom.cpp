@@ -299,6 +299,10 @@ void setCacheCompressionType(CacheCompressionType type) {
 // default is to use the TEXT_CACHE_UNPACKED_SPACE & co defined above as is
 static float _storageMaxUncompressedSizeFactor = 1;
 void setStorageMaxUncompressedSizeFactor(float factor) {
+	if (factor < 1.0f)
+		factor = 1.0f;
+	else if (factor > 8.0f)
+		factor = 8.0f;
 	_storageMaxUncompressedSizeFactor = factor;
 }
 
@@ -1401,8 +1405,8 @@ bool CacheFile::zstdAllocComp()
     }
 
     // Parameters are sticky
-    // NOTE: ZSTD_CLEVEL_DEFAULT is currently 3, sane range is 1-19
-    ZSTD_CCtx_setParameter(_zstd_comp_res->cctx, ZSTD_c_compressionLevel, ZSTD_CLEVEL_DEFAULT);
+    // NOTE: level 1 gives fast swap writes with negligible size difference vs default 3
+    ZSTD_CCtx_setParameter(_zstd_comp_res->cctx, ZSTD_c_compressionLevel, 1);
     // This would be redundant with CRe's own calcHash, AFAICT?
     //ZSTD_CCtx_setParameter(_comp_ress->cctx, ZSTD_c_checksumFlag, 1);
 
@@ -16261,7 +16265,8 @@ public:
         }
         if ( findFileIndex( pathname ) >= 0 )
             LVDeleteFile( pathname );
-        reserve( fileSize/10 );
+        lUInt32 estCacheSize = (fileSize <= (0xFFFFFFFFUL / 4)) ? (fileSize * 4) : fileSize;
+        reserve( estCacheSize );
         //res = LVMapFileStream( (_cacheDir+fn).c_str(), LVOM_APPEND, fileSize );
         LVDeleteFile( pathname ); // try to delete, ignore errors
         res = LVOpenFileStream( pathname.c_str(), LVOM_APPEND|LVOM_FLAG_SYNC );
@@ -16281,7 +16286,7 @@ public:
         res = LVCreateCompareTestStream(res, stream2);
 #endif
 #endif
-        moveFileToTop( fn, fileSize );
+        moveFileToTop( fn, estCacheSize );
         return res;
     }
 

@@ -244,9 +244,9 @@ xml:base="http://lib.ololo.cc/opds/">
 	
 	public static class OPDSHandler extends DefaultHandler {
 		private URL url;
-		private DocInfo docInfo = new DocInfo(); 
+		DocInfo docInfo = new DocInfo(); 
 		private EntryInfo entryInfo = new EntryInfo(); 
-		private ArrayList<EntryInfo> entries = new ArrayList<EntryInfo>(); 
+		ArrayList<EntryInfo> entries = new ArrayList<EntryInfo>(); 
 		private Stack<String> elements = new Stack<String>();
 		//private Attributes currentAttributes;
 		private AuthorInfo authorInfo;
@@ -289,8 +289,8 @@ xml:base="http://lib.ololo.cc/opds/">
 				throws SAXException {
 			super.characters(ch, start, length);
 			
-			String s = new String( ch, start, length);
-			s = s.trim();
+			String raw = new String(ch, start, length);
+			String s = raw.trim();
 			if (s.length()==0 || (s.length()==1 && s.charAt(0) == '\n') )
 				return; // ignore empty line
 			//L.d(tab() + "  {" + s + "}");
@@ -311,13 +311,13 @@ xml:base="http://lib.ololo.cc/opds/">
 						docInfo.updated = ts;
 				} else if ( "title".equals(currentElement) ) {
 					if ( !insideEntry ) {
-						docInfo.title = s;
+						docInfo.title = (docInfo.title == null ? "" : docInfo.title) + raw;
 					} else {
-						entryInfo.title = entryInfo.title + s;
+						entryInfo.title = entryInfo.title + raw;
 					}
 				} else if ( "summary".equals(currentElement) ) {
 					if ( insideEntry )
-						entryInfo.summary = entryInfo.summary + s;
+						entryInfo.summary = entryInfo.summary + raw;
 				} else if ( "name".equals(currentElement) ) {
 					if ( authorInfo != null )
 						authorInfo.name = s;
@@ -337,7 +337,7 @@ xml:base="http://lib.ololo.cc/opds/">
 //						entryInfo.icon = s;
 				} else if ( "content".equals(currentElement) ) {
 					if ( insideEntry )
-						entryInfo.content = entryInfo.content + s;
+						entryInfo.content = entryInfo.content + raw;
 				} else if ( "subtitle".equals(currentElement) ) {
 					if ( !insideEntry )
 						docInfo.subtitle = s;
@@ -345,9 +345,7 @@ xml:base="http://lib.ololo.cc/opds/">
 					if ( !insideEntry )
 						docInfo.language = s;
 				} else if ( insideEntryTitle ) {
-					if (entryInfo.title.length() > 0)
-						entryInfo.title = entryInfo.title + " ";
-					entryInfo.title = entryInfo.title + s;
+					entryInfo.title = entryInfo.title + raw;
 				}
 			}
 		}
@@ -460,9 +458,17 @@ xml:base="http://lib.ololo.cc/opds/">
 				insideFeed = false;
 			} else if ( "title".equals(localName) ) {
 				insideEntryTitle = false;
+				if (insideEntry && entryInfo != null && entryInfo.title != null)
+					entryInfo.title = entryInfo.title.trim();
+				else if (!insideEntry && docInfo.title != null)
+					docInfo.title = docInfo.title.trim();
 			} else if ( "entry".equals(localName) ) {
 				if ( !insideFeed || !insideEntry )
 					throw new SAXException("unexpected element " + localName);
+				if (entryInfo.summary != null)
+					entryInfo.summary = entryInfo.summary.trim();
+				if (entryInfo.content != null)
+					entryInfo.content = entryInfo.content.trim();
 				if ( entryInfo.link!=null || entryInfo.getBestAcquisitionLink()!=null ) {
 					entries.add(entryInfo);
 				}
@@ -751,14 +757,14 @@ xml:base="http://lib.ololo.cc/opds/">
 
 		private static final long OPDS_CACHE_TTL_MS = 60 * 60 * 1000L; // 1 hour
 
-		private static class CacheMeta {
+		static class CacheMeta {
 			long timestamp;
 			String etag;
 			String lastModified;
 			String contentType;
 		}
 
-		private static String sha1Hex(String input) {
+		static String sha1Hex(String input) {
 			try {
 				MessageDigest md = MessageDigest.getInstance("SHA-1");
 				byte[] digest = md.digest(input.getBytes("UTF-8"));
@@ -793,7 +799,7 @@ xml:base="http://lib.ololo.cc/opds/">
 			OPDSUtil.writeCacheMeta(metaFile, meta);
 		}
 
-		private static boolean isXmlFeedContentType(String contentType) {
+		static boolean isXmlFeedContentType(String contentType) {
 			if (contentType == null)
 				return false;
 			String lower = contentType.toLowerCase();
@@ -1212,7 +1218,7 @@ xml:base="http://lib.ololo.cc/opds/">
 		return baos.toByteArray();
 	}
 
-	private static DownloadTask.CacheMeta readCacheMeta(File metaFile) {
+	static DownloadTask.CacheMeta readCacheMeta(File metaFile) {
 		if (!metaFile.exists())
 			return null;
 		Properties p = new Properties();
@@ -1229,7 +1235,7 @@ xml:base="http://lib.ololo.cc/opds/">
 		}
 	}
 
-	private static void writeCacheEntry(File bodyFile, File metaFile, byte[] data, DownloadTask.CacheMeta meta) {
+	static void writeCacheEntry(File bodyFile, File metaFile, byte[] data, DownloadTask.CacheMeta meta) {
 		try (FileOutputStream fos = new FileOutputStream(bodyFile)) {
 			fos.write(data);
 		} catch (Exception e) {
