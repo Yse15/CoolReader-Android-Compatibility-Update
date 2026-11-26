@@ -580,6 +580,7 @@ public class CRToolBar extends ViewGroup {
 		scroll.setVerticalFadingEdgeEnabled(true);
 		scroll.setFadingEdgeLength(h / 10);
 
+		boolean isBottom = (popupLocation == Settings.VIEWER_TOOLBAR_BOTTOM);
 		int safeLeft = 0, safeTop = 0, safeRight = 0, safeBottom = 0;
 		if (context.isFullscreen() && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P && anchor != null) {
 			android.view.WindowInsets rootInsets = anchor.getRootWindowInsets();
@@ -587,20 +588,25 @@ public class CRToolBar extends ViewGroup {
 				android.view.DisplayCutout cutout = rootInsets.getDisplayCutout();
 				if (cutout != null) {
 					safeLeft = Math.max(safeLeft, cutout.getSafeInsetLeft());
-					safeTop = Math.max(safeTop, cutout.getSafeInsetTop());
+					if (!isBottom)
+						safeTop = Math.max(safeTop, cutout.getSafeInsetTop());
 					safeRight = Math.max(safeRight, cutout.getSafeInsetRight());
-					safeBottom = Math.max(safeBottom, cutout.getSafeInsetBottom());
+					if (isBottom)
+						safeBottom = Math.max(safeBottom, cutout.getSafeInsetBottom());
 				}
 				if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
 					android.view.RoundedCorner c;
-					if ((c = rootInsets.getRoundedCorner(android.view.RoundedCorner.POSITION_TOP_LEFT)) != null)
-						safeTop = Math.max(safeTop, c.getRadius());
-					if ((c = rootInsets.getRoundedCorner(android.view.RoundedCorner.POSITION_TOP_RIGHT)) != null)
-						safeTop = Math.max(safeTop, c.getRadius());
-					if ((c = rootInsets.getRoundedCorner(android.view.RoundedCorner.POSITION_BOTTOM_LEFT)) != null)
-						safeBottom = Math.max(safeBottom, c.getRadius());
-					if ((c = rootInsets.getRoundedCorner(android.view.RoundedCorner.POSITION_BOTTOM_RIGHT)) != null)
-						safeBottom = Math.max(safeBottom, c.getRadius());
+					if (!isBottom) {
+						if ((c = rootInsets.getRoundedCorner(android.view.RoundedCorner.POSITION_TOP_LEFT)) != null)
+							safeTop = Math.max(safeTop, c.getRadius());
+						if ((c = rootInsets.getRoundedCorner(android.view.RoundedCorner.POSITION_TOP_RIGHT)) != null)
+							safeTop = Math.max(safeTop, c.getRadius());
+					} else {
+						if ((c = rootInsets.getRoundedCorner(android.view.RoundedCorner.POSITION_BOTTOM_LEFT)) != null)
+							safeBottom = Math.max(safeBottom, c.getRadius());
+						if ((c = rootInsets.getRoundedCorner(android.view.RoundedCorner.POSITION_BOTTOM_RIGHT)) != null)
+							safeBottom = Math.max(safeBottom, c.getRadius());
+					}
 				}
 			}
 		}
@@ -665,6 +671,8 @@ public class CRToolBar extends ViewGroup {
 		popup.setFocusable(true);
 		popup.setTouchable(true);
 		popup.setOutsideTouchable(true);
+		if (context.isFullscreen())
+			popup.setClippingEnabled(false);
 		popup.setContentView(scroll);
 		InterfaceTheme theme = context.getCurrentTheme();
 		Drawable bg;
